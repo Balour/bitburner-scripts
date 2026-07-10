@@ -13,7 +13,7 @@
 .DS_Store
 
 # Netscript definitions is pulled automatically
-NetScriptDefinitions.d.ts
+NetscriptDefinitions.d.ts
 
 # https://github.com/github/gitignore/blob/main/Node.gitignore
 
