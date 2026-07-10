@@ -1,4 +1,3 @@
-/* eslint-env node */
 import { defineConfig } from 'viteburner';
 import { resolve } from 'path';
 
