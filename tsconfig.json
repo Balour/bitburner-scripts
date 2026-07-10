@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "baseUrl": ".",
     "inlineSourceMap": true,
-    "moduleResolution": "Node",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "paths": {

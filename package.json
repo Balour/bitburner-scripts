@@ -1,21 +1,24 @@
 {
-  "name": "viteburner-template",
+  "name": "bitburner-scripts",
   "version": "0.0.0",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "viteburner"
+    "dev": "viteburner",
+    "lint:ts": "tsc --noEmit"
   },
-  "author": "Tanimodori",
+  "author": "Balour",
   "devDependencies": {
-    "@types/node": "^18.15.3",
-    "@typescript-eslint/eslint-plugin": "^5.55.0",
-    "@typescript-eslint/parser": "^5.55.0",
-    "eslint": "^8.36.0",
-    "eslint-config-prettier": "^8.7.0",
+    "@types/node": "^24.10.1",
+    "@typescript-eslint/eslint-plugin": "^5.62.0",
+    "@typescript-eslint/parser": "^5.62.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^8.10.0",
     "eslint-plugin-prettier": "^4.2.1",
-    "prettier": "^2.8.4",
-    "typescript": "^4.9.5",
-    "vite": "^4.1.4",
-    "viteburner": "^0.5.3"
+    "prettier": "^2.8.8",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.4",
+    "viteburner": "file:../viteburner"
   },
   "license": "MIT"
 }

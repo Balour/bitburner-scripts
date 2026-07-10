@@ -15,7 +15,8 @@ export default defineConfig({
     minify: false,
   },
   viteburner: {
-    watch: [{ pattern: 'src/**/*.{js,ts,jsx,tsx}', transform: true }, { pattern: 'src/**/*.{script,txt}' }],
+    // Bitburner v3 removed NS1, so `.script` files no longer run in-game.
+    watch: [{ pattern: 'src/**/*.{js,ts,jsx,tsx}', transform: true }, { pattern: 'src/**/*.txt' }],
     sourcemap: 'inline',
   },
 });
