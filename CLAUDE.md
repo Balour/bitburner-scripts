@@ -90,23 +90,53 @@ Concrete worker costs: `hack` 1.70 GB, `grow` 1.75 GB, `weaken` 1.75 GB.
 At 8 GB home, `getServer` (2 GB) and the `*Analyze` family (1 GB each) are effectively unaffordable.
 Prefer the 0.05–0.1 GB `getServer*` scalar getters and compute thread counts by hand.
 
-### Static vs dynamic RAM, and RAM-dodging
+### Static vs dynamic RAM — all of this is verified in-game
 
-Static RAM is parsed from the source text (which `ns.foo` you mention) and reserved at launch. At
-runtime the **dynamic RAM check** enforces that every NS function actually called incurs its cost; a
-script that exceeds its reservation is killed.
+Probe scripts live in `src/probe/ram/`. `run /probe/ram/report.js` reprints the table below from the
+live game; the others demonstrate the runtime behaviour. Re-run them after any game update.
 
-`ns.ramOverride(gb)` (0 GB) and `RunOptions.ramOverride` adjust that reservation. Per the official
-docs, you may:
+**The static parser (`src/Script/RamCalculations.ts`) harvests every bare identifier name** in the
+module and matches it against the RAM cost table. It never checks that the name was reached through
+`ns`. Measured:
 
-- **Override down** — "if you know that certain functions (included in the static RAM cost) will
-  never be called in a particular circumstance, you can use this to avoid paying for them." *This is
-  where the savings are.*
-- **Override up** — "if the static RAM checker has missed functions that you need to call."
+| pattern | GB | rule |
+|---|---|---|
+| nothing | 1.60 | base cost of any script |
+| `ns.getServer(...)` inside `if (false)`-style dead code | 3.60 | **dead references still cost** |
+| `ns['getServer']` | 1.60 | literal bracket access is **invisible** |
+| `ns[key]`, key from `ns.args` | 1.60 | dynamic access is **invisible** |
+| `getServer` reached only via `import` | 3.60 | **imports are followed** |
+| a **local variable** named `share` | **4.00** | charged `ns.share`'s 2.4 GB |
+| `ns.ramOverride(1.6)` as the first statement | 1.60 | pins the total, ignoring everything else |
 
-Overriding up does not make calls free; it buys headroom for functions the parser didn't see (e.g.
-dynamically-accessed ones). The lever worth using early is a generic worker whose reservation is
-sized per-role at launch. **We have not yet tested this in-game — verify before relying on it.**
+> **The naming hazard.** Never name a local variable, parameter, or function after an NS API.
+> `const share = ...` costs 2.4 GB. `const scan = ...` costs 0.2. `hack`/`grow`/`weaken` cost
+> 0.1/0.15/0.15. `exec` 1.3, `run` 1.0, `getServer` 2.0. Anything named `document` or `window` costs
+> **25 GB**. This is multiplied per thread on workers. It bit us once already: a probe named its
+> local `const getServer`, silently paid 2 GB, and nearly produced the wrong conclusion.
+
+**The dynamic check kills you.** `dynamicRamUsage` accumulates the true cost of each distinct NS
+function actually called. The moment it exceeds the reservation, the game calls `killWorkerScript`
+and throws. The thrown value is a *string*, so `catch` runs — but `stopFlag` is already set, so the
+next `ns` call dies with an uncatchable `ScriptDeath`. Observed: `call-dynamic.js` prints one line
+and vanishes mid-`try`. **Treat it as fatal.**
+
+**`dynamicRamUsage` is monotonic.** `ramOverride` (0 GB) may:
+
+- **raise** the reservation, if the server has the free RAM. Then a dynamically-accessed function
+  becomes callable — you pay real RAM at that moment.
+- **lower** it, but never below what you have already spent. Observed: after raising 1.6 → 4 and
+  calling `getServer`, `ramOverride(1.6)` was refused and returned **4** (refusal returns the current
+  allocation). Lowering to 3.6 — the high-water mark — would have worked.
+
+**So RAM dodging does not make calls free.** Pinning static RAM low only defers the reservation; the
+call still costs, and if the server lacks the RAM at that instant, `ramOverride` refuses and the
+subsequent call kills the script.
+
+**The one real dodge is the helper-script pattern.** Each script's RAM is calculated and enforced
+independently. A tiny helper pays for the expensive call in *its own* process and returns the result
+over a port. The caller pays only `exec` (1.3 GB) or `run` (1.0 GB) — **all port I/O is free**. This
+is how a lean controller reads `getServer` data without ever paying 2 GB itself.
 
 ## Strategy
 
@@ -133,17 +163,39 @@ Player's stated preferences:
   but wanted eventually. Which one matters depends on the BitNode — e.g. where hacking is throttled,
   Bladeburner is a second route to completing the node.
 
-## `ns.dnet` — the Darknet, unexplored
+## `ns.dnet` — the Darknet: real, lucrative, and NOT early
 
-New in v3, a whole subsystem, and **not** the classic TOR darkweb (that's still
-`ns.singularity.purchaseProgram`). Neither the player nor past sessions have used it. The API
-includes `probe`, `authenticate`, `connectToSession`, `heartbleed`, `phishingAttack`, `openCache`,
-`promoteStock`, `induceServerMigration`, `unleashStormSeed`, `getDarknetInstability`, `nextMutation`,
-`setStasisLink`, `getBlockedRam`, `getDepth`, and `getServerRequiredCharismaLevel`.
+New in v3. A second server network layered on the normal one, hidden from `ns.scan`. It constantly
+mutates: servers move, restart (killing your scripts), and go offline. Servers are cracked by
+**guessing passwords**, not by NUKE + port openers. It is **not** the classic TOR darkweb — that is
+still `ns.singularity.purchaseProgram`, and the old `darkweb` server becomes the darknet's entry node.
 
-There is a `Multipliers.dnet_money` ("money gained from phishing and caches on darknet servers") and
-`MoneySource.casino`/`.servers`, so it is a real income path. Investigate before assuming it's
-optional flavor.
+**Gated behind `DarkscapeNavigator.exe`.** Confirmed in-game:
+`"You do not have access to the dnet api. Purchase \"DarkscapeNavigator.exe\" through your TOR router."`
+It costs **$50M** on the darkweb, or **$30M** at a location in Chongqing, plus a TOR router (~$200k).
+No Source-File, no BitNode lock, no hacking level — the gate is purely money, so it *is* reachable
+without Singularity. BN1's darknet money multiplier is **1.0** (full); BN9 is 0.05, BN8 disables it.
+
+**Do not build for it in run #1's early game.** Access needs $50M you don't have, and everything that
+makes it pay scales with **charisma, which starts at 1**. Early `phishingAttack` is ~5% success,
+~10 s per attempt, ~$50 payout — a charisma trainer, not income.
+
+**Worth returning to mid-run**, because caches are the prize: clearing a server's blocked RAM
+(`memoryReallocation`) drops a `.cache`, and `openCache` rolls one reward from ~5 categories — money
+(**~$10M at difficulty 0**, ×1.2 per difficulty), **free port programs, even Formulas.exe** (else
+$5B), stock-market access, or coding contracts. For a no-Singularity BN1 run where programs are
+bought by hand, that is a serious shortcut.
+
+Practical notes: `probe()` only sees servers **directly connected** to the server the script runs on,
+so spreading means `scp`+`exec` hop by hop. The expensive verbs are meant to run **on darknet
+servers**, which have abundant RAM — `setStasisLink` is 12 GB and `induceServerMigration` 4 GB, both
+impossible on an 8 GB home. Instability is zero until you backdoor more than 2 darknet servers.
+`unleashStormSeed()` is a deliberate self-destruct that wipes ~60% of the net — never call it by
+accident. `openCache` costs karma, which is inert without gangs.
+
+Read-only recon lives in `src/probe/dnet.ts` (`run /probe/dnet.js`); it touches nothing that mutates
+state. Correction to an earlier guess: `MoneySource.casino`/`.servers` are **unrelated** to the
+darknet, whose income is credited under a `"darknet"` source.
 
 ## Legacy scripts (`../legacy_scripts/`)
 
