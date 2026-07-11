@@ -1,7 +1,7 @@
 import type { NS } from '@ns';
 import type { Target } from './lib/types';
 import { crawl, rooted } from './lib/net';
-import { HACK_FRACTION, PORT_RANK, TARGETS_FILE } from './lib/ports';
+import { HACK_FRACTION, PORT_RANK, TARGETS_FILE, VERSION } from './lib/ports';
 
 /**
  * 4.85 GB. Stage-2 controller: drain piles, sustain what grow can afford.
@@ -173,6 +173,7 @@ async function reRank(ns: NS): Promise<Target[] | null> {
 export async function main(ns: NS) {
   ns.disableLog('ALL');
   ns.ui.openTail();
+  ns.print(`daemon ${VERSION} starting`);
 
   // Clear workers left by a previous run — orphans hitting the old target muddy
   // every measurement. Safe on pool hosts, never touches home.
@@ -210,20 +211,28 @@ export async function main(ns: NS) {
     const poolTotal = slots.reduce((sum, s) => sum + s.free, 0);
     const fitBudget = poolTotal * SUSTAIN_SHARE;
 
-    // Every hackable server is a candidate. Sustainable ones (grow fits) sort
-    // first so they always earn; the rest — grow-bound piles — follow by score,
-    // richest first, so we drain down the whole list instead of quitting after
-    // the top few empty out.
-    const candidates = targets
+    // Classify every hackable server (money measured once). Round order:
+    //   tier 0 — maxed sustainables: BATCH, they produce income, get the pool first
+    //   tier 1 — prepping sustainables: grow-only, no income, capped to MAX_PREP
+    //   tier 2 — drains: grow-bound piles, richest first
+    // Within a tier, higher moneyScore first.
+    const info = targets
       .filter((t) => t.moneyScore > 0)
+      .map((t) => {
+        const money = ns.getServerMoneyAvailable(t.host);
+        const maxMoney = ns.getServerMaxMoney(t.host);
+        const b = batchOf(t);
+        const sustain = b.ram <= fitBudget;
+        const maxed = sustain && money >= maxMoney * PREP_DONE;
+        return { t, money, maxMoney, b, sustain, maxed };
+      })
       .sort((a, b) => {
-        const fitA = batchOf(a).ram <= fitBudget ? 1 : 0;
-        const fitB = batchOf(b).ram <= fitBudget ? 1 : 0;
-        return fitA !== fitB ? fitB - fitA : b.moneyScore - a.moneyScore;
+        const tier = (x: typeof a) => (x.sustain ? (x.maxed ? 0 : 1) : 2);
+        return tier(a) - tier(b) || b.t.moneyScore - a.t.moneyScore;
       })
       .slice(0, MAX_ACTIVE);
 
-    if (candidates.length === 0) {
+    if (info.length === 0) {
       await ns.sleep(2000);
       continue;
     }
@@ -236,18 +245,12 @@ export async function main(ns: NS) {
     // player's wallet, so this captures both drain and batch income correctly.
     const homeBefore = ns.getServerMoneyAvailable('home');
 
-    for (const t of candidates) {
+    for (const x of info) {
       if (poolFree(slots) < HACK_COST) break;
+      const { t, money, maxMoney, b } = x;
       const host = t.host;
-      const money = ns.getServerMoneyAvailable(host);
-      const maxMoney = ns.getServerMaxMoney(host);
-      const b = batchOf(t);
-      // SUSTAIN only if a whole batch both fits the pool in principle AND fits the
-      // RAM still free this round — otherwise a giant grow lands as a useless
-      // handful of threads. Everything else DRAINS.
-      const sustain = b.ram <= fitBudget && b.ram <= poolFree(slots);
 
-      if (sustain) {
+      if (x.sustain) {
         // Only SUSTAIN targets get weakened to min — they need it to batch. NEVER
         // weaken a drain target: a reqSkill-100 server's weaken can take 10+ min
         // and, because the round waits for its slowest op, would gate everything.
@@ -259,25 +262,32 @@ export async function main(ns: NS) {
           notes.push(`weaken ${host} ${curSec.toFixed(1)}->${t.minSec.toFixed(1)} (${want}t)`);
           continue;
         }
+        // A whole batch must fit the RAM still free, or its grow lands as a useless
+        // handful. Highest-value targets are sorted first, so this greedily fills
+        // the pool and naturally defers the rest — no fixed prep cap needed: on a
+        // big pool everything fits, on a small one the overflow just waits its turn.
+        if (b.ram > poolFree(slots)) {
+          notes.push(`wait ${host} $${((100 * money) / maxMoney).toFixed(0)}%`);
+          continue;
+        }
         // PREP (below PREP_DONE): grow only, no hack, so it climbs to max fast.
         // MAINTAIN (at max): hack a slice and grow it straight back.
-        const prepping = money < maxMoney * PREP_DONE;
+        const prepping = !x.maxed;
         const hackT = prepping ? 0 : b.hackT;
         const weakenT = Math.max(1, Math.ceil((hackT * HACK_SEC + b.growT * GROW_SEC) / WEAKEN_SEC));
         const hp = hackT > 0 ? dispatch(ns, HACK_FILE, HACK_COST, hackT, host, slots, copied) : [];
         const gp = dispatch(ns, GROW_FILE, GROW_COST, b.growT, host, slots, copied);
         const wp = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, weakenT, host, slots, copied);
         pids.push(...hp, ...gp, ...wp);
-        const partial = gp.length === 0 ? ' !nopool' : '';
         notes.push(
-          `${prepping ? 'prep  ' : 'batch '}${host} $${((100 * money) / maxMoney).toFixed(0)}% (h${hackT} g${b.growT} w${weakenT})${partial}`,
+          `${prepping ? 'prep  ' : 'batch '}${host} $${((100 * money) / maxMoney).toFixed(0)}% (h${hackT} g${b.growT} w${weakenT})`,
         );
         continue;
       }
 
       // DRAIN: grow-bound pile, hack-only at whatever security it sits at. Skip if
       // empty, or if one hack would take longer than MAX_OP_MS — a slow hack gates
-      // the whole round, and these piles are not worth stalling harakiri's prep.
+      // the whole round, and these piles are not worth stalling a giant's prep.
       if (money < maxMoney * DRAIN_FLOOR) {
         notes.push(`drained ${host}`);
         continue;
@@ -295,9 +305,24 @@ export async function main(ns: NS) {
       continue;
     }
 
-    await awaitPids(ns, pids);
+    // Log the dispatch NOW, before awaiting — a round can take minutes (it waits
+    // for its slowest op), and without this the tail looks frozen the whole time.
+    const tally = { batch: 0, prep: 0, drain: 0, weaken: 0, wait: 0 };
+    for (const n of notes) {
+      const kind = n.split(' ')[0] as keyof typeof tally;
+      if (kind in tally) tally[kind] += 1;
+    }
+    const usedGb = poolTotal - poolFree(slots);
+    ns.print(
+      `r${round}: ${tally.batch} batch, ${tally.prep} prep, ${tally.drain} drain, ${tally.weaken} weaken, ${tally.wait} wait` +
+        ` | pool ${ns.format.ram(usedGb)}/${ns.format.ram(poolTotal)} (${((100 * usedGb) / Math.max(1, poolTotal)).toFixed(0)}%)`,
+    );
+    ns.print(`  ${notes.join(' | ')}`);
 
+    const t0 = Date.now();
+    await awaitPids(ns, pids);
+    const secs = ((Date.now() - t0) / 1000).toFixed(0);
     const earned = ns.getServerMoneyAvailable('home') - homeBefore;
-    ns.print(`r${round} ${notes.join(' | ')}${earned > 0 ? `  +$${money$(earned)}/round` : ''}`);
+    ns.print(`  r${round} done ${secs}s${earned > 0 ? `, net +$${money$(earned)}` : ''}`);
   }
 }

@@ -1,5 +1,9 @@
 /** Constants only. No NS calls, so importing this costs 0 GB. */
 
+/** Bumped on every code change so a script can print which build is live — the
+ * quick check that the sync actually pushed the latest version, not stale code. */
+export const VERSION = 'v6';
+
 /** rank.js publishes its Target[] here. Port I/O is free and global across hosts. */
 export const PORT_RANK = 1;
 

@@ -1,7 +1,7 @@
 import type { NS } from '@ns';
 import type { Target } from './lib/types';
 import { crawl, rooted } from './lib/net';
-import { TARGETS_FILE } from './lib/ports';
+import { TARGETS_FILE, VERSION } from './lib/ports';
 
 /**
  * 2.40 GB. Read-only dashboard. Fits beside daemon.js once home is 16 GB
@@ -30,7 +30,7 @@ export async function main(ns: NS) {
       used += ns.getServerUsedRam(host);
     }
 
-    ns.print(`hacking ${ns.getHackingLevel()}`);
+    ns.print(`monitor ${VERSION}  hacking ${ns.getHackingLevel()}`);
     ns.print(`pool    ${ns.format.ram(used)} / ${ns.format.ram(capacity)} across ${hosts.length} host(s)`);
     ns.print('');
 
