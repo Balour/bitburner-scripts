@@ -2,7 +2,13 @@
 
 /** Bumped on every code change so a script can print which build is live — the
  * quick check that the sync actually pushed the latest version, not stale code. */
-export const VERSION = 'v6';
+export const VERSION = 'v8';
+
+/** RAM to keep free on `home` for the controllers plus their transient execs
+ * (rank.js 5.45 GB during re-ranks, root.js 2.4 GB) and headroom for a bigger
+ * controller later. Workers/share use home's RAM only ABOVE this. Auto-scales:
+ * an 8 GB home nets negative here and is skipped; a 512 GB home offers ~475 GB. */
+export const HOME_RESERVE = 32;
 
 /** rank.js publishes its Target[] here. Port I/O is free and global across hosts. */
 export const PORT_RANK = 1;

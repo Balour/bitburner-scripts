@@ -1,7 +1,7 @@
 import type { NS } from '@ns';
 import type { Target } from './lib/types';
 import { crawl, rooted } from './lib/net';
-import { HACK_FRACTION, PORT_RANK, TARGETS_FILE, VERSION } from './lib/ports';
+import { HACK_FRACTION, HOME_RESERVE, PORT_RANK, TARGETS_FILE, VERSION } from './lib/ports';
 
 /**
  * 4.85 GB. Stage-2 controller: drain piles, sustain what grow can afford.
@@ -80,10 +80,12 @@ interface Batch {
 function poolOf(ns: NS, hosts: string[]): Slot[] {
   const slots: Slot[] = [];
   for (const host of hosts) {
-    if (host === 'home') continue; // home runs the controllers + rank, not workers
     const capacity = ns.getServerMaxRam(host);
     if (capacity <= 0) continue;
-    const free = capacity - ns.getServerUsedRam(host);
+    // home is a worker host too — measured, not excluded — but keep HOME_RESERVE
+    // free for the controllers and their transient rank/root execs.
+    let free = capacity - ns.getServerUsedRam(host);
+    if (host === 'home') free -= HOME_RESERVE;
     if (free >= HACK_COST) slots.push({ host, free });
   }
   return slots.sort((a, b) => b.free - a.free);
@@ -206,7 +208,7 @@ export async function main(ns: NS) {
       }
     }
 
-    const hosts = rooted(ns, crawl(ns)).filter((h) => h !== 'home');
+    const hosts = rooted(ns, crawl(ns)); // home included — poolOf reserves controller RAM
     const slots = poolOf(ns, hosts);
     const poolTotal = slots.reduce((sum, s) => sum + s.free, 0);
     const fitBudget = poolTotal * SUSTAIN_SHARE;

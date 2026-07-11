@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { crawl, rooted } from './lib/net';
-import { VERSION } from './lib/ports';
+import { HOME_RESERVE, VERSION } from './lib/ports';
 
 /**
  * 3.85 GB. Floods spare pool RAM with share() to boost faction reputation gain
@@ -28,11 +28,15 @@ export async function main(ns: NS) {
   const copied = new Set<string>();
 
   while (true) {
-    const hosts = rooted(ns, crawl(ns)).filter((h) => h !== 'home');
+    // home included — its idle RAM (512 GB, minus the controller reserve) is fair
+    // game for share, same as any pool host. getServerUsedRam already counts the
+    // daemon's workers, so this only ever claims genuinely-free RAM.
+    const hosts = rooted(ns, crawl(ns));
     let free = 0;
     const slots = hosts
       .map((host) => {
-        const room = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
+        const reserve = host === 'home' ? HOME_RESERVE : 0;
+        const room = ns.getServerMaxRam(host) - ns.getServerUsedRam(host) - reserve;
         free += Math.max(0, room);
         return { host, room };
       })
