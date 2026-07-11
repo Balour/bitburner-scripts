@@ -2,40 +2,50 @@ import type { NS } from '@ns';
 import { VERSION } from './lib/ports';
 
 /**
- * 3.00 GB. Run this once after any reset. Launches the money stack and exits.
+ * ~3.0 GB. Run once after any reset. RAM-adaptive: launches only the scripts that
+ * fit the current home, in priority order, leaving headroom for rank/root execs.
  *
- * There is no stage detection to do: home RAM survives augment installs (only
- * purchased servers and levels reset), and the daemon already adapts to level on
- * its own — bootstrap-target while weak, drain piles, prep a giant once RAM
- * allows. So this just starts the persistent scripts and gets out of the way.
+ * After a fresh BitNode home is 8 GB and only the daemon fits — that alone earns
+ * (it targets n00dles, drains piles, all on the ~100 GB of 0-port pool). As you
+ * upgrade home RAM, RE-RUN bootstrap and it adds monitor, then auto-buy, then
+ * share. Home RAM survives augment installs, so on those you may already have room
+ * for the whole stack immediately.
  *
- * share.js runs on a SEPARATE loop, not inside the daemon: share() lasts ~10s and
- * must be re-launched that often to stay active, but a daemon round takes minutes,
- * so share woven into it would lapse ~98% of the time. It only touches genuinely
- * idle RAM (the pool has ~90 TB the daemon never uses), so it never costs money —
- * money-first still holds. It only helps while you are working a faction, but is
- * harmless otherwise, so we just leave it on.
+ * share stays a separate 10s loop (share() lasts ~10s; it would lapse inside a
+ * daemon round). It only touches idle RAM, so money-first still holds.
  *
  * Run: `run /bootstrap.js`
  */
 const STACK = [
-  { file: '/daemon.js', why: 'root + rank + drain/prep/sustain hacking' },
-  { file: '/monitor.js', why: 'dashboard' },
-  { file: '/auto-buy.js', why: 'compound income into pool RAM' },
-  { file: '/share.js', why: 'reputation from idle RAM (helps while working a faction)' },
+  { file: '/daemon.js', ram: 4.85, why: 'root + rank + decoupled hacking' },
+  { file: '/monitor.js', ram: 2.4, why: 'dashboard' },
+  { file: '/auto-buy.js', ram: 6.05, why: 'compound income into pool RAM' },
+  { file: '/share.js', ram: 3.85, why: 'reputation from idle RAM' },
 ];
+/** Leave this much home RAM free after each launch, so the daemon can still exec
+ * root.js (2.4 GB) on home. rank.js runs remotely when home is too small for it,
+ * so we do NOT reserve its 5.45 GB here — that would skip the daemon on an 8 GB home. */
+const LAUNCH_HEADROOM = 3;
 
 export async function main(ns: NS) {
   ns.tprint('');
   ns.tprint(`=== bootstrap ${VERSION} ===`);
-  for (const { file, why } of STACK) {
+  const homeMax = ns.getServerMaxRam('home');
+
+  for (const { file, ram, why } of STACK) {
     if (ns.isRunning(file, 'home')) {
-      ns.tprint(`  already running: ${file}`);
+      ns.tprint(`  running:  ${file}`);
+      continue;
+    }
+    const free = homeMax - ns.getServerUsedRam('home');
+    if (free < ram + LAUNCH_HEADROOM) {
+      ns.tprint(`  skip:     ${file.padEnd(14)} — needs ${ram} GB + headroom, home has ${ns.format.ram(free)} free`);
       continue;
     }
     const pid = ns.exec(file, 'home');
-    ns.tprint(pid !== 0 ? `  launched ${file.padEnd(16)} — ${why}` : `  FAILED to launch ${file} (home out of RAM?)`);
+    ns.tprint(pid !== 0 ? `  launched: ${file.padEnd(14)} — ${why}` : `  FAILED:   ${file}`);
   }
-  ns.tprint(`  share.js runs on idle RAM — boosts rep while you work a faction`);
+
+  ns.tprint(`  home ${ns.format.ram(homeMax)} — upgrade it and re-run bootstrap to add more of the stack`);
   ns.tprint('');
 }

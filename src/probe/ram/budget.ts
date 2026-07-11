@@ -23,6 +23,7 @@ const BUDGET = [
     'net 0.25 + exec 1.3 + scp 0.6 + killall 0.5 + isRunning 0.1 + getHackTime 0.05 + hackingLevel + 4 scalars',
   ],
   ['/monitor.js', '2.40', 'net 0.25 + 4 scalars + maxRam/usedRam 0.1'],
+  ['/map.js', '2.15', 'scan 0.2 + fileExists 0.1 + reqLevel/maxMoney/numPorts + hasRootAccess'],
   ['/bootstrap.js', '3.00', 'isRunning 0.1 + exec 1.3 — just a launcher'],
   ['/buy-servers.js', '5.75', 'lib/cloud: purchaseServer 2.25 + getServerNames 1.05 + cost/upgrade/limits + scalars'],
   ['/auto-buy.js', '6.05', 'lib/cloud + net 0.25 + usedRam 0.05 to gate on pool utilization'],

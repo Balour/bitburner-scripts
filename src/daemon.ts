@@ -4,28 +4,24 @@ import { crawl, rooted } from './lib/net';
 import { HACK_FRACTION, HOME_RESERVE, PORT_RANK, TARGETS_FILE, VERSION } from './lib/ports';
 
 /**
- * 4.85 GB. Stage-2 controller: drain piles, sustain what grow can afford.
+ * ~5.0 GB. Decoupled batcher: every target runs on its OWN clock.
  *
- * NEVER import rank.ts — the parser follows imports and rank's analysis calls
- * (hackAnalyze, hackAnalyzeChance, growthAnalyze) would add 3 GB. Batch maths
- * arrives as data over a free port. No ns.getServer (2 GB), no *Analyze here.
+ * The old design dispatched every server, waited for ALL of them, then repeated —
+ * so one reqSkill-150 server with a 5-minute weaken paced the whole loop and a
+ * 90-second server only got to act every 5 minutes. This version never waits on
+ * the whole fleet. Each tick (~1s) it re-dispatches only the targets whose
+ * previous batch has finished (polled via isRunning), pulling from whatever pool
+ * RAM is free right now, best-value first. Fast servers cycle fast, slow servers
+ * cycle slow, all concurrently — income becomes the SUM of each server's own rate.
  *
- * THREE MODES, CHOSEN PER SERVER PER ROUND
- * ----------------------------------------
- * These servers have tiny serverGrowth: refilling a 25% hack on a $57M server
- * needs ~700 grow threads (>1 TB). Whether that fits decides the mode:
+ * Per target, when it comes free: weaken to min, then PREP (grow to max, no hack),
+ * then MAINTAIN (hack a slice + grow it back). Grow-bound piles DRAIN (hack-only).
  *
- *   - weaken to min security first (cheap, needed for hack chance/time)
- *   - PREP/SUSTAIN, if one whole batch fits the pool: grow to max (no hacking
- *     until PREP_DONE, so it climbs fast), then hold at max by hacking a slice
- *     and growing it straight back. One rich giant (harakiri) can claim most of
- *     the pool this way — the highest $/sec available.
- *   - DRAIN, if the refill does not fit: hack the sitting pile with no grow,
- *     extract what is there, abandon once emptied. Grow-bound piles, one-shot.
+ * RAM-adaptive for resets: rank runs on home when it fits, else on a remote pool
+ * host, so this works at 8 GB home (fresh BitNode) exactly as at 512 GB. Never
+ * imports rank — its analysis calls would add 3 GB; batch maths arrive as data.
  *
- * Round-based: dispatch every target's ops, poll isRunning to completion, remeasure.
- * Not wall-clock — that is the legacy desync bug. Fire-and-forget flooding is also
- * gone; it clogged the pool with untracked jobs. Run: `run /daemon.js`
+ * Run: `run /daemon.js`
  */
 
 const HACK_FILE = '/workers/hack.js';
@@ -37,31 +33,24 @@ const ROOT_FILE = '/root.js';
 const HACK_COST = 1.7;
 const GROW_COST = 1.75;
 const WEAKEN_COST = 1.75;
+/** rank.js static RAM — used to decide whether home can host it. */
+const RANK_RAM = 5.45;
 
-/** Security each thread moves, single core. hack/grow raise, weaken lowers. */
 const HACK_SEC = 0.002;
 const GROW_SEC = 0.004;
 const WEAKEN_SEC = 0.05;
 
 const SEC_SLACK = 0.5;
-/** Stop hacking a server once its money falls below this share of max — a drained
- * grow-bound pile is not worth more hacks. */
 const DRAIN_FLOOR = 0.03;
-/** Skip draining a server whose single hack would take longer than this. The round
- * waits for its slowest op, so a slow high-reqSkill hack would gate everything;
- * these grow-bound piles are not worth stalling a giant's prep for. Milliseconds. */
-const MAX_OP_MS = 60000;
-/** A server can SUSTAIN (prep to max + maintain) only if one batch fits this share
- * of the pool. 0.9 lets a single rich giant claim most of the pool for sequential
- * batches — the harakiri play — while still refusing servers no pool can hold.
- * Everything that does not fit is DRAINED instead. */
+/** Skip draining a server whose one hack would take longer than this (ms) — a slow
+ * op is fine now (it only ties up its own batch, not the fleet) but a grow-bound
+ * pile that slow is rarely worth the threads. */
+const MAX_OP_MS = 120000;
 const SUSTAIN_SHARE = 0.9;
-/** Below this share of max money a sustain target is still PREPPING: grow only,
- * do not hack, so it climbs to max fast before we start harvesting it. */
 const PREP_DONE = 0.9;
-/** Cap on targets worked per round. High enough to cover every hackable server so
- * draining the top piles never leaves the daemon idle with richer piles untouched. */
-const MAX_ACTIVE = 16;
+const TICK_MS = 1000;
+/** Ticks between income summaries (~15s). */
+const LOG_EVERY = 15;
 
 const BREAKPOINTS = [10, 25, 50, 100, 250, 500, 1000];
 
@@ -77,13 +66,17 @@ interface Batch {
   ram: number;
 }
 
+interface Job {
+  pids: number[];
+  phase: string;
+}
+
 function poolOf(ns: NS, hosts: string[]): Slot[] {
   const slots: Slot[] = [];
   for (const host of hosts) {
     const capacity = ns.getServerMaxRam(host);
     if (capacity <= 0) continue;
-    // home is a worker host too — measured, not excluded — but keep HOME_RESERVE
-    // free for the controllers and their transient rank/root execs.
+    // home is a worker host too, but keep HOME_RESERVE for the controllers + rank.
     let free = capacity - ns.getServerUsedRam(host);
     if (host === 'home') free -= HOME_RESERVE;
     if (free >= HACK_COST) slots.push({ host, free });
@@ -92,14 +85,10 @@ function poolOf(ns: NS, hosts: string[]): Slot[] {
 }
 
 function poolFree(slots: Slot[]): number {
-  return slots.reduce((sum, slot) => sum + slot.free, 0);
+  return slots.reduce((sum, slot) => sum + Math.max(0, slot.free), 0);
 }
 
-/**
- * Spreads `want` threads across hosts, largest free first. One exec = one
- * N-thread process. Partial allocation is fine; the round re-measures. Mutates
- * `slots` so later dispatches in the same round do not oversubscribe.
- */
+/** Spread `want` threads across hosts, largest free first. Mutates slots. */
 function dispatch(
   ns: NS,
   file: string,
@@ -129,14 +118,15 @@ function dispatch(
   return pids;
 }
 
-async function awaitPids(ns: NS, pids: number[]) {
-  if (pids.length === 0) return;
-  while (pids.some((pid) => ns.isRunning(pid))) await ns.sleep(200);
+function alive(ns: NS, pids: number[]): boolean {
+  return pids.some((pid) => ns.isRunning(pid));
 }
 
-/** One batch's thread counts. hackT steals HACK_FRACTION of current money; growT
- * (from rank's growthAnalyze) refills it plus a climb; the weakens cancel the
- * security both raise. */
+async function awaitPids(ns: NS, pids: number[]) {
+  if (pids.length === 0) return;
+  while (alive(ns, pids)) await ns.sleep(200);
+}
+
 function batchOf(t: Target): Batch {
   const hackT = Math.max(1, Math.floor(HACK_FRACTION / t.pctAtMin));
   const growT = Math.max(1, Math.round(t.growThreads));
@@ -149,57 +139,125 @@ function crossedBreakpoint(before: number, after: number): boolean {
   return BREAKPOINTS.some((mark) => before < mark && after >= mark);
 }
 
-async function reRank(ns: NS): Promise<Target[] | null> {
-  // Runs on home: at 32 GB, daemon (4.8) + rank (5.45) + monitor (2.4) all fit,
-  // so no remote host or scp is needed — rank reads its own imports from home.
+/** Home if it can host rank.js, else the biggest remote pool host that can. */
+function pickRankHost(ns: NS, hosts: string[]): string {
+  if (ns.getServerMaxRam('home') - ns.getServerUsedRam('home') >= RANK_RAM + 1) return 'home';
+  return (
+    hosts
+      .filter((h) => h !== 'home' && ns.getServerMaxRam(h) - ns.getServerUsedRam(h) >= RANK_RAM + 1)
+      .sort((a, b) => ns.getServerMaxRam(b) - ns.getServerMaxRam(a))[0] ?? ''
+  );
+}
+
+async function reRank(ns: NS, hosts: string[], copied: Set<string>): Promise<Target[] | null> {
+  const rankHost = pickRankHost(ns, hosts);
+  if (rankHost === '') {
+    ns.print(`  rank: no host with ${RANK_RAM} GB free (home too small, pool empty?)`);
+    return null;
+  }
+  if (rankHost !== 'home') {
+    for (const file of [RANK_FILE, '/lib/net.js', '/lib/ports.js']) {
+      const key = `${rankHost}|${file}`;
+      if (!copied.has(key)) {
+        ns.scp(file, rankHost);
+        copied.add(key);
+      }
+    }
+  }
   ns.clearPort(PORT_RANK);
-  const pid = ns.exec(RANK_FILE, 'home', 1);
+  const pid = ns.exec(RANK_FILE, rankHost, 1);
   if (pid === 0) return null;
   await awaitPids(ns, [pid]);
 
   const raw = ns.readPort(PORT_RANK);
   if (typeof raw !== 'string' || raw === 'NULL PORT DATA') {
-    ns.print(`  rank: no data on port (rank.js failed — home short on RAM?)`);
+    ns.print(`  rank: no data on port (rank.js on ${rankHost} failed?)`);
     return null;
   }
   const targets = JSON.parse(raw) as Target[];
   ns.write(TARGETS_FILE, JSON.stringify(targets, null, 2), 'w');
-  const top = [...targets].filter((t) => t.moneyScore > 0).sort((a, b) => b.moneyScore - a.moneyScore)[0];
-  ns.print(
-    `  rank: ${targets.length} servers, ${targets.filter((t) => t.moneyScore > 0).length} hackable` +
-      (top ? `, top $ ${top.host}` : ''),
-  );
+  ns.print(`  rank on ${rankHost}: ${targets.filter((t) => t.moneyScore > 0).length} hackable of ${targets.length}`);
   return targets;
+}
+
+/** Decide and dispatch one ready target's next batch. Mutates job + slots. */
+function step(
+  ns: NS,
+  t: Target,
+  money: number,
+  maxMoney: number,
+  sustain: boolean,
+  slots: Slot[],
+  job: Job,
+  copied: Set<string>,
+) {
+  const host = t.host;
+  const b = batchOf(t);
+
+  if (sustain) {
+    const sec = ns.getServerSecurityLevel(host);
+    if (sec > t.minSec + SEC_SLACK) {
+      const want = Math.ceil((sec - t.minSec) / WEAKEN_SEC);
+      if (want * WEAKEN_COST > poolFree(slots)) return; // wait for RAM
+      job.pids = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, want, host, slots, copied);
+      job.phase = 'weaken';
+      return;
+    }
+    if (b.ram > poolFree(slots)) return; // whole batch must fit, else wait
+    const prepping = money < maxMoney * PREP_DONE;
+    const hackT = prepping ? 0 : b.hackT;
+    const weakenT = Math.max(1, Math.ceil((hackT * HACK_SEC + b.growT * GROW_SEC) / WEAKEN_SEC));
+    const pids = hackT > 0 ? dispatch(ns, HACK_FILE, HACK_COST, hackT, host, slots, copied) : [];
+    pids.push(...dispatch(ns, GROW_FILE, GROW_COST, b.growT, host, slots, copied));
+    pids.push(...dispatch(ns, WEAKEN_FILE, WEAKEN_COST, weakenT, host, slots, copied));
+    job.pids = pids;
+    job.phase = prepping ? 'prep' : 'maintain';
+    return;
+  }
+
+  // DRAIN — grow-bound pile, hack-only.
+  if (money < maxMoney * DRAIN_FLOOR) {
+    job.pids = [];
+    job.phase = 'drained';
+    return;
+  }
+  if (ns.getHackTime(host) > MAX_OP_MS) {
+    job.pids = [];
+    job.phase = 'slow';
+    return;
+  }
+  if (b.hackT * HACK_COST > poolFree(slots)) return;
+  job.pids = dispatch(ns, HACK_FILE, HACK_COST, b.hackT, host, slots, copied);
+  job.phase = 'drain';
 }
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
   ns.ui.openTail();
-  ns.print(`daemon ${VERSION} starting`);
+  ns.print(`daemon ${VERSION} starting (decoupled)`);
 
-  // Clear workers left by a previous run — orphans hitting the old target muddy
-  // every measurement. Safe on pool hosts, never touches home.
+  // Clear stale pool workers from a previous run. Never home (controllers).
   for (const host of rooted(ns, crawl(ns))) {
     if (host !== 'home') ns.killall(host);
   }
 
   const copied = new Set<string>();
+  const jobs = new Map<string, Job>();
   let targets: Target[] = [];
   let lastLevel = 0;
-  let round = 0;
-
-  const money$ = (n: number) => ns.format.number(n);
+  let tick = 0;
+  let anchorMoney = ns.getServerMoneyAvailable('home');
 
   while (true) {
-    round += 1;
+    tick += 1;
     const level = ns.getHackingLevel();
+    const hosts = rooted(ns, crawl(ns));
 
     if (targets.length === 0 || crossedBreakpoint(lastLevel, level)) {
       const rootPid = ns.exec(ROOT_FILE, 'home');
       if (rootPid !== 0) await awaitPids(ns, [rootPid]);
-
       ns.print(`re-rank at level ${level} (was ${lastLevel})`);
-      const fresh = await reRank(ns);
+      const fresh = await reRank(ns, hosts, copied);
       if (fresh) targets = fresh;
       lastLevel = level;
       if (targets.length === 0) {
@@ -208,123 +266,48 @@ export async function main(ns: NS) {
       }
     }
 
-    const hosts = rooted(ns, crawl(ns)); // home included — poolOf reserves controller RAM
     const slots = poolOf(ns, hosts);
-    const poolTotal = slots.reduce((sum, s) => sum + s.free, 0);
-    const fitBudget = poolTotal * SUSTAIN_SHARE;
+    const fitBudget = poolFree(slots) * SUSTAIN_SHARE;
 
-    // Classify every hackable server (money measured once). Round order:
-    //   tier 0 — maxed sustainables: BATCH, they produce income, get the pool first
-    //   tier 1 — prepping sustainables: grow-only, no income, capped to MAX_PREP
-    //   tier 2 — drains: grow-bound piles, richest first
-    // Within a tier, higher moneyScore first.
-    const info = targets
+    // Only targets whose previous batch has finished are ready to re-dispatch.
+    const ready = targets
       .filter((t) => t.moneyScore > 0)
+      .filter((t) => !alive(ns, jobs.get(t.host)?.pids ?? []))
       .map((t) => {
         const money = ns.getServerMoneyAvailable(t.host);
         const maxMoney = ns.getServerMaxMoney(t.host);
-        const b = batchOf(t);
-        const sustain = b.ram <= fitBudget;
+        const sustain = batchOf(t).ram <= fitBudget;
         const maxed = sustain && money >= maxMoney * PREP_DONE;
-        return { t, money, maxMoney, b, sustain, maxed };
+        return { t, money, maxMoney, sustain, maxed };
       })
-      .sort((a, b) => {
-        const tier = (x: typeof a) => (x.sustain ? (x.maxed ? 0 : 1) : 2);
-        return tier(a) - tier(b) || b.t.moneyScore - a.t.moneyScore;
-      })
-      .slice(0, MAX_ACTIVE);
+      // Income-producing (maxed) first, then by score — they win scarce RAM.
+      .sort((a, b) => (a.maxed !== b.maxed ? Number(b.maxed) - Number(a.maxed) : b.t.moneyScore - a.t.moneyScore));
 
-    if (info.length === 0) {
-      await ns.sleep(2000);
-      continue;
-    }
-
-    const pids: number[] = [];
-    const notes: string[] = [];
-    // Income is home-money delta over the round: a sustained server is refilled by
-    // its own grow before the round ends, so its on-server delta reads ~0 even
-    // though the hack banked real cash. getServerMoneyAvailable('home') is the
-    // player's wallet, so this captures both drain and batch income correctly.
-    const homeBefore = ns.getServerMoneyAvailable('home');
-
-    for (const x of info) {
+    for (const r of ready) {
       if (poolFree(slots) < HACK_COST) break;
-      const { t, money, maxMoney, b } = x;
-      const host = t.host;
-
-      if (x.sustain) {
-        // Only SUSTAIN targets get weakened to min — they need it to batch. NEVER
-        // weaken a drain target: a reqSkill-100 server's weaken can take 10+ min
-        // and, because the round waits for its slowest op, would gate everything.
-        const curSec = ns.getServerSecurityLevel(host);
-        if (curSec > t.minSec + SEC_SLACK) {
-          const want = Math.ceil((curSec - t.minSec) / WEAKEN_SEC);
-          const p = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, want, host, slots, copied);
-          pids.push(...p);
-          notes.push(`weaken ${host} ${curSec.toFixed(1)}->${t.minSec.toFixed(1)} (${want}t)`);
-          continue;
-        }
-        // A whole batch must fit the RAM still free, or its grow lands as a useless
-        // handful. Highest-value targets are sorted first, so this greedily fills
-        // the pool and naturally defers the rest — no fixed prep cap needed: on a
-        // big pool everything fits, on a small one the overflow just waits its turn.
-        if (b.ram > poolFree(slots)) {
-          notes.push(`wait ${host} $${((100 * money) / maxMoney).toFixed(0)}%`);
-          continue;
-        }
-        // PREP (below PREP_DONE): grow only, no hack, so it climbs to max fast.
-        // MAINTAIN (at max): hack a slice and grow it straight back.
-        const prepping = !x.maxed;
-        const hackT = prepping ? 0 : b.hackT;
-        const weakenT = Math.max(1, Math.ceil((hackT * HACK_SEC + b.growT * GROW_SEC) / WEAKEN_SEC));
-        const hp = hackT > 0 ? dispatch(ns, HACK_FILE, HACK_COST, hackT, host, slots, copied) : [];
-        const gp = dispatch(ns, GROW_FILE, GROW_COST, b.growT, host, slots, copied);
-        const wp = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, weakenT, host, slots, copied);
-        pids.push(...hp, ...gp, ...wp);
-        notes.push(
-          `${prepping ? 'prep  ' : 'batch '}${host} $${((100 * money) / maxMoney).toFixed(0)}% (h${hackT} g${b.growT} w${weakenT})`,
-        );
-        continue;
-      }
-
-      // DRAIN: grow-bound pile, hack-only at whatever security it sits at. Skip if
-      // empty, or if one hack would take longer than MAX_OP_MS — a slow hack gates
-      // the whole round, and these piles are not worth stalling a giant's prep.
-      if (money < maxMoney * DRAIN_FLOOR) {
-        notes.push(`drained ${host}`);
-        continue;
-      }
-      if (ns.getHackTime(host) > MAX_OP_MS) {
-        notes.push(`skip ${host} (slow)`);
-        continue;
-      }
-      dispatch(ns, HACK_FILE, HACK_COST, b.hackT, host, slots, copied);
-      notes.push(`drain ${host} $${((100 * money) / maxMoney).toFixed(0)}% (h${b.hackT})`);
+      const job = jobs.get(r.t.host) ?? { pids: [], phase: 'idle' };
+      step(ns, r.t, r.money, r.maxMoney, r.sustain, slots, job, copied);
+      jobs.set(r.t.host, job);
     }
 
-    if (pids.length === 0) {
-      await ns.sleep(1000);
-      continue;
+    if (tick % LOG_EVERY === 0) {
+      const phases = { maintain: 0, prep: 0, weaken: 0, drain: 0, drained: 0, slow: 0 };
+      for (const job of jobs.values()) {
+        const key = job.phase as keyof typeof phases;
+        if (key in phases) phases[key] += 1;
+      }
+      const now = ns.getServerMoneyAvailable('home');
+      const rate = (now - anchorMoney) / (LOG_EVERY * (TICK_MS / 1000));
+      anchorMoney = now;
+      const poolMax = hosts.reduce((sum, h) => sum + ns.getServerMaxRam(h), 0);
+      const poolUsed = Math.max(0, poolMax - poolFree(slots));
+      ns.print(
+        `t${tick}: ${phases.maintain} maintain, ${phases.prep} prep, ${phases.weaken} weaken, ${phases.drain} drain, ` +
+          `${phases.drained + phases.slow} idle | pool ${ns.format.ram(poolUsed)}/${ns.format.ram(poolMax)} | ` +
+          `net ${rate >= 0 ? '+' : ''}$${ns.format.number(rate)}/sec`,
+      );
     }
 
-    // Log the dispatch NOW, before awaiting — a round can take minutes (it waits
-    // for its slowest op), and without this the tail looks frozen the whole time.
-    const tally = { batch: 0, prep: 0, drain: 0, weaken: 0, wait: 0 };
-    for (const n of notes) {
-      const kind = n.split(' ')[0] as keyof typeof tally;
-      if (kind in tally) tally[kind] += 1;
-    }
-    const usedGb = poolTotal - poolFree(slots);
-    ns.print(
-      `r${round}: ${tally.batch} batch, ${tally.prep} prep, ${tally.drain} drain, ${tally.weaken} weaken, ${tally.wait} wait` +
-        ` | pool ${ns.format.ram(usedGb)}/${ns.format.ram(poolTotal)} (${((100 * usedGb) / Math.max(1, poolTotal)).toFixed(0)}%)`,
-    );
-    ns.print(`  ${notes.join(' | ')}`);
-
-    const t0 = Date.now();
-    await awaitPids(ns, pids);
-    const secs = ((Date.now() - t0) / 1000).toFixed(0);
-    const earned = ns.getServerMoneyAvailable('home') - homeBefore;
-    ns.print(`  r${round} done ${secs}s${earned > 0 ? `, net +$${money$(earned)}` : ''}`);
+    await ns.sleep(TICK_MS);
   }
 }
