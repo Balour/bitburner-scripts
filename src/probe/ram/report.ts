@@ -10,6 +10,7 @@ const PROBES = [
   ['bracket', '1.60', "ns['getServer'] — literal bracket, invisible to parser"],
   ['variable', '1.60', 'ns[key] where key comes from ns.args — invisible'],
   ['imported', '3.60', 'getServer reached only through an import'],
+  ['named', '1.60', 'named import of a free symbol; the module also exports getServer'],
   ['shadow', '4.00', 'a LOCAL named `share` — charged ns.share 2.4 GB'],
   ['pinned', '1.60', 'ns.ramOverride(1.6) as first statement pins the total'],
 ] as const;
