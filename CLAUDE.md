@@ -106,8 +106,16 @@ module and matches it against the RAM cost table. It never checks that the name 
 | `ns['getServer']` | 1.60 | literal bracket access is **invisible** |
 | `ns[key]`, key from `ns.args` | 1.60 | dynamic access is **invisible** |
 | `getServer` reached only via `import` | 3.60 | **imports are followed** |
+| `import { cheap }` from a module that *also* exports a `getServer` caller | 1.60 | named imports are charged **per symbol** |
 | a **local variable** named `share` | **4.00** | charged `ns.share`'s 2.4 GB |
 | `ns.ramOverride(1.6)` as the first statement | 1.60 | pins the total, ignoring everything else |
+
+> **Imports are followed per *symbol*, not per module.** `RamCalculations.ts` maps each
+> `ImportSpecifier` to `module.name` and walks only that symbol's dependency set. So a lib may hold an
+> expensive helper next to a cheap one, and `import { cheap }` pays nothing for it. But
+> `import * as lib` and default imports add `module.*` and drag in **everything** — never use them for
+> a lib that touches a costly API. The module's *top-level* scope is always a dependency, so keep
+> costed calls inside functions, never at module level.
 
 > **The naming hazard.** Never name a local variable, parameter, or function after an NS API.
 > `const share = ...` costs 2.4 GB. `const scan = ...` costs 0.2. `hack`/`grow`/`weaken` cost
