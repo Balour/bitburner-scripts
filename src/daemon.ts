@@ -51,6 +51,10 @@ const PREP_DONE = 0.9;
 const TICK_MS = 1000;
 /** Ticks between income summaries (~15s). */
 const LOG_EVERY = 15;
+/** Ticks between a re-root + re-rank (~5 min), on top of level breakpoints. Catches
+ * a newly-bought port opener (e.g. SQLInject roots the 5-port servers) or purchased
+ * servers without waiting for the next breakpoint or a restart. */
+const RERANK_EVERY = 300;
 
 const BREAKPOINTS = [10, 25, 50, 100, 250, 500, 1000];
 
@@ -253,7 +257,7 @@ export async function main(ns: NS) {
     const level = ns.getHackingLevel();
     const hosts = rooted(ns, crawl(ns));
 
-    if (targets.length === 0 || crossedBreakpoint(lastLevel, level)) {
+    if (targets.length === 0 || crossedBreakpoint(lastLevel, level) || tick % RERANK_EVERY === 0) {
       const rootPid = ns.exec(ROOT_FILE, 'home');
       if (rootPid !== 0) await awaitPids(ns, [rootPid]);
       ns.print(`re-rank at level ${level} (was ${lastLevel})`);
