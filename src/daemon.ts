@@ -1,7 +1,7 @@
 import type { NS } from '@ns';
 import type { Target } from './lib/types';
 import { crawl, rooted } from './lib/net';
-import { HACK_FRACTION, HOME_RESERVE, PORT_RANK, TARGETS_FILE, VERSION } from './lib/ports';
+import { HACK_FRACTION, HOME_RESERVE, PORT_RAMNEED, PORT_RANK, TARGETS_FILE, VERSION } from './lib/ports';
 
 /**
  * ~5.0 GB. Decoupled batcher: every target runs on its OWN clock.
@@ -189,7 +189,8 @@ async function reRank(ns: NS, hosts: string[], copied: Set<string>): Promise<Tar
   return targets;
 }
 
-/** Decide and dispatch one ready target's next batch. Mutates job + slots. */
+/** Decide and dispatch one ready target's next batch. Mutates job + slots. Returns
+ * true if it wanted to dispatch but there was not enough pool RAM (money-starved). */
 function step(
   ns: NS,
   t: Target,
@@ -199,7 +200,7 @@ function step(
   slots: Slot[],
   job: Job,
   copied: Set<string>,
-) {
+): boolean {
   const host = t.host;
   const b = batchOf(t);
 
@@ -207,12 +208,12 @@ function step(
     const sec = ns.getServerSecurityLevel(host);
     if (sec > t.minSec + SEC_SLACK) {
       const want = Math.ceil((sec - t.minSec) / WEAKEN_SEC);
-      if (want * WEAKEN_COST > poolFree(slots)) return; // wait for RAM
+      if (want * WEAKEN_COST > poolFree(slots)) return true; // RAM-starved
       job.pids = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, want, host, slots, copied);
       job.phase = 'weaken';
-      return;
+      return false;
     }
-    if (b.ram > poolFree(slots)) return; // whole batch must fit, else wait
+    if (b.ram > poolFree(slots)) return true; // whole batch must fit
     const prepping = money < maxMoney * PREP_DONE;
     const hackT = prepping ? 0 : b.hackT;
     const weakenT = Math.max(1, Math.ceil((hackT * HACK_SEC + b.growT * GROW_SEC) / WEAKEN_SEC));
@@ -221,23 +222,24 @@ function step(
     pids.push(...dispatch(ns, WEAKEN_FILE, WEAKEN_COST, weakenT, host, slots, copied));
     job.pids = pids;
     job.phase = prepping ? 'prep' : 'maintain';
-    return;
+    return false;
   }
 
   // DRAIN — grow-bound pile, hack-only.
   if (money < maxMoney * DRAIN_FLOOR) {
     job.pids = [];
     job.phase = 'drained';
-    return;
+    return false;
   }
   if (ns.getHackTime(host) > MAX_OP_MS) {
     job.pids = [];
     job.phase = 'slow';
-    return;
+    return false;
   }
-  if (b.hackT * HACK_COST > poolFree(slots)) return;
+  if (b.hackT * HACK_COST > poolFree(slots)) return true;
   job.pids = dispatch(ns, HACK_FILE, HACK_COST, b.hackT, host, slots, copied);
   job.phase = 'drain';
+  return false;
 }
 
 /**
@@ -322,12 +324,19 @@ export async function main(ns: NS) {
       // Income-producing (maxed) first, then by score — they win scarce RAM.
       .sort((a, b) => (a.maxed !== b.maxed ? Number(b.maxed) - Number(a.maxed) : b.t.moneyScore - a.t.moneyScore));
 
+    let moneyStarved = false;
     for (const r of ready) {
-      if (poolFree(slots) < HACK_COST) break;
+      if (poolFree(slots) < HACK_COST) {
+        moneyStarved = moneyStarved || ready.some((x) => x.sustain);
+        break;
+      }
       const job = jobs.get(r.t.host) ?? { pids: [], phase: 'idle' };
-      step(ns, r.t, r.money, r.maxMoney, r.sustain, slots, job, copied);
+      if (step(ns, r.t, r.money, r.maxMoney, r.sustain, slots, job, copied)) moneyStarved = true;
       jobs.set(r.t.host, job);
     }
+    // Tell auto-buy to grow the pool only for real hacking demand, not XP fill.
+    ns.clearPort(PORT_RAMNEED);
+    ns.writePort(PORT_RAMNEED, moneyStarved ? '1' : '0');
 
     // XP pass — with whatever RAM money did not need (down to the share floor),
     // farm exp on the best servers we cannot hack yet, richest xp first. Raising

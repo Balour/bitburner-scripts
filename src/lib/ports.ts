@@ -2,7 +2,7 @@
 
 /** Bumped on every code change so a script can print which build is live — the
  * quick check that the sync actually pushed the latest version, not stale code. */
-export const VERSION = 'v11';
+export const VERSION = 'v12';
 
 /** RAM to keep free on `home` for the controllers plus their transient execs
  * (rank.js 5.45 GB during re-ranks, root.js 2.4 GB) and headroom for a bigger
@@ -12,6 +12,11 @@ export const HOME_RESERVE = 32;
 
 /** rank.js publishes its Target[] here. Port I/O is free and global across hosts. */
 export const PORT_RANK = 1;
+
+/** daemon publishes '1' here when MONEY targets are RAM-starved, '0' otherwise, so
+ * auto-buy grows the pool for hacking demand only — not for XP farming, which fills
+ * any RAM and would otherwise drive endless buying. */
+export const PORT_RAMNEED = 2;
 
 /** Written on `home` for humans and for monitor.js. `ns.read`/`ns.write` are 0 GB. */
 export const TARGETS_FILE = '/data/targets.json';
