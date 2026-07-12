@@ -2,7 +2,7 @@
 
 /** Bumped on every code change so a script can print which build is live — the
  * quick check that the sync actually pushed the latest version, not stale code. */
-export const VERSION = 'v10';
+export const VERSION = 'v11';
 
 /** RAM to keep free on `home` for the controllers plus their transient execs
  * (rank.js 5.45 GB during re-ranks, root.js 2.4 GB) and headroom for a bigger

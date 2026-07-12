@@ -48,6 +48,11 @@ const DRAIN_FLOOR = 0.03;
 const MAX_OP_MS = 120000;
 const SUSTAIN_SHARE = 0.9;
 const PREP_DONE = 0.9;
+/** After money targets, XP-farm servers we cannot hack yet (grow grants exp with no
+ * level gate) to raise level and unlock the high-reqSkill giants — but stop once
+ * pool free drops to this fraction, leaving that RAM for share. Priority is
+ * money > xp > rep. Set to 1 to disable XP farming entirely. */
+const SHARE_FLOOR = 0.3;
 const TICK_MS = 1000;
 /** Ticks between income summaries (~15s). */
 const LOG_EVERY = 15;
@@ -235,6 +240,36 @@ function step(
   job.phase = 'drain';
 }
 
+/**
+ * Farm hacking exp on a server we cannot hack yet: weaken to min (fast grow), then
+ * spam grow (exp has no level gate) with a matched weaken to hold security. Uses
+ * pool RAM only down to `floorGb`, so share keeps its share. No hack — reqSkill is
+ * too high — so this is pure exp toward unlocking the server as a money target.
+ */
+function stepXp(ns: NS, t: Target, slots: Slot[], job: Job, copied: Set<string>, floorGb: number) {
+  const host = t.host;
+  const budget = poolFree(slots) - floorGb;
+  if (budget < GROW_COST) return;
+
+  const sec = ns.getServerSecurityLevel(host);
+  if (sec > t.minSec + SEC_SLACK) {
+    const want = Math.min(Math.ceil((sec - t.minSec) / WEAKEN_SEC), Math.floor(budget / WEAKEN_COST));
+    if (want < 1) return;
+    job.pids = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, want, host, slots, copied);
+    job.phase = 'xp-w';
+    return;
+  }
+  // Grow rains exp; a matched weaken (~1 per 12 grow, from the security math) holds
+  // it at min. perGrow bundles each grow thread's share of that weaken RAM.
+  const perGrow = GROW_COST + (GROW_SEC / WEAKEN_SEC) * WEAKEN_COST;
+  const growN = Math.max(1, Math.floor(budget / perGrow));
+  const weakenN = Math.max(1, Math.ceil((growN * GROW_SEC) / WEAKEN_SEC));
+  const pids = dispatch(ns, GROW_FILE, GROW_COST, growN, host, slots, copied);
+  pids.push(...dispatch(ns, WEAKEN_FILE, WEAKEN_COST, weakenN, host, slots, copied));
+  job.pids = pids;
+  job.phase = 'xp';
+}
+
 export async function main(ns: NS) {
   ns.disableLog('ALL');
   ns.ui.openTail();
@@ -294,8 +329,26 @@ export async function main(ns: NS) {
       jobs.set(r.t.host, job);
     }
 
+    // XP pass — with whatever RAM money did not need (down to the share floor),
+    // farm exp on the best servers we cannot hack yet, richest xp first. Raising
+    // level unlocks the high-reqSkill giants, which re-rank then adds as targets.
+    const poolTotal = hosts.reduce((sum, h) => sum + ns.getServerMaxRam(h), 0);
+    const floorGb = poolTotal * SHARE_FLOOR;
+    if (poolFree(slots) > floorGb) {
+      const xpReady = targets
+        .filter((t) => t.moneyScore === 0 && t.xpScore > 0)
+        .filter((t) => !alive(ns, jobs.get(t.host)?.pids ?? []))
+        .sort((a, b) => b.xpScore - a.xpScore);
+      for (const t of xpReady) {
+        if (poolFree(slots) <= floorGb) break;
+        const job = jobs.get(t.host) ?? { pids: [], phase: 'idle' };
+        stepXp(ns, t, slots, job, copied, floorGb);
+        jobs.set(t.host, job);
+      }
+    }
+
     if (tick % LOG_EVERY === 0) {
-      const phases = { maintain: 0, prep: 0, weaken: 0, drain: 0, drained: 0, slow: 0 };
+      const phases = { maintain: 0, prep: 0, weaken: 0, drain: 0, xp: 0, 'xp-w': 0, drained: 0, slow: 0 };
       for (const job of jobs.values()) {
         const key = job.phase as keyof typeof phases;
         if (key in phases) phases[key] += 1;
@@ -306,9 +359,9 @@ export async function main(ns: NS) {
       const poolMax = hosts.reduce((sum, h) => sum + ns.getServerMaxRam(h), 0);
       const poolUsed = Math.max(0, poolMax - poolFree(slots));
       ns.print(
-        `t${tick}: ${phases.maintain} maintain, ${phases.prep} prep, ${phases.weaken} weaken, ${phases.drain} drain, ` +
-          `${phases.drained + phases.slow} idle | pool ${ns.format.ram(poolUsed)}/${ns.format.ram(poolMax)} | ` +
-          `net ${rate >= 0 ? '+' : ''}$${ns.format.number(rate)}/sec`,
+        `t${tick}: ${phases.maintain} maintain, ${phases.prep} prep, ${phases.drain} drain, ` +
+          `${phases.xp + phases['xp-w']} xp, ${phases.drained + phases.slow} idle | ` +
+          `pool ${ns.format.ram(poolUsed)}/${ns.format.ram(poolMax)} | net ${rate >= 0 ? '+' : ''}$${ns.format.number(rate)}/sec`,
       );
     }
 
