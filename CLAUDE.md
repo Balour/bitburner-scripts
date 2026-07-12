@@ -171,6 +171,49 @@ Player's stated preferences:
   but wanted eventually. Which one matters depends on the BitNode — e.g. where hacking is throttled,
   Bladeburner is a second route to completing the node.
 
+## The automation stack (built)
+
+The ladder above is realized. `run /bootstrap.js` after any reset launches the whole self-driving
+machine; measured **~$7.8M/sec** on a mature run. Every persistent script prints `VERSION` (in
+`lib/ports.ts`) on start — bump it on any change, glance at the tail to confirm the sync pushed current
+code, not stale. `run /probe/ram/budget.js` verifies every script's static RAM against its budget.
+
+- **`bootstrap.ts`** — RAM-adaptive launcher. Starts only the scripts that fit the current home, in
+  priority order (daemon → monitor → auto-buy → share), leaving `LAUNCH_HEADROOM` for root's exec.
+  On an 8 GB home only the daemon fits; re-run after upgrading home to add the rest. Then exits.
+- **`daemon.ts`** — the decoupled batcher. Ticks ~1s; re-dispatches only targets whose previous batch
+  finished (polled via `isRunning`), best-value first, from whatever pool RAM is free. Each server runs
+  on its **own clock** — fast ones cycle every ~90s, slow ones every ~5min, concurrently; income is the
+  sum of each server's rate (the round-based predecessor was ~9× slower, paced by the slowest server).
+  Per target: weaken→min, then PREP (grow to max, no hack), then MAINTAIN (hack a slice + grow back);
+  grow-bound piles DRAIN (hack-only). Runs `rank` on home when it fits, else a remote pool host — this
+  is what makes it work at 8 GB home. Never imports `rank` (its analysis calls would add 3 GB); batch
+  maths arrive as a `Target[]` over a free port.
+- **`rank.ts`** — the Formulas.exe substitute: projects every server to min security exactly, because
+  security enters each formula through one term that cancels in a ratio. Also `growthAnalyze` per
+  target for batch grow-thread cost. Ranks by money and xp; writes `Target[]` to the port + a file.
+- **`root.ts`** — nukes everything whose port requirement is met. `nuke` checks ports only, never
+  hacking level, so ~100 GB is free at skill 1.
+- **`auto-buy.ts`** — compounds income into pool RAM via `ns.cloud`, but only while the pool is
+  ≥85% utilized, so it stops instead of ballooning. `buy-servers.ts` is the one-shot version;
+  both share `lib/cloud.ts`.
+- **`share.ts`** — floods idle pool RAM with `share()` for faction rep (`1 + ln(threads)/25`, strongly
+  diminishing). Separate 10s loop, NOT in the daemon: `share()` lasts ~10s and would lapse inside a
+  minutes-long tick otherwise. Its `cap` (0.6) leaves margin, so it auto-yields RAM back to hacking.
+- **`map.ts`** — network audit; BFS the whole tree, report every server's depth/root/why-not-hackable.
+- **`monitor.ts`** — `ns.ui.openTail` dashboard.
+
+`lib/ports.ts` holds shared constants: `VERSION`, `HOME_RESERVE` (home RAM kept free for controllers +
+transient rank/root execs — home is a measured worker host, not hard-excluded), `HACK_FRACTION`,
+`GROW_MULT`, port/file paths.
+
+**Reset ritual:** `run /bootstrap.js`, let the daemon earn, upgrade home RAM, re-run bootstrap as it
+grows. Purchased servers do NOT survive an augment install (home RAM does); auto-buy rebuys after.
+
+**Biggest untapped lever:** more targets. Only ~15 servers are hackable at a time; the rest are
+level-gated or need `SQLInject.exe` (buy on the darkweb — roots the 29 five-port servers at once). Idle
+pool RAM is a symptom of too few targets, not inefficiency.
+
 ## `ns.dnet` — the Darknet: real, lucrative, and NOT early
 
 New in v3. A second server network layered on the normal one, hidden from `ns.scan`. It constantly
