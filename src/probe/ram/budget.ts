@@ -17,14 +17,20 @@ const BUDGET = [
     '5.45',
     'net 0.25 + hackAnalyze 1 + hackAnalyzeChance 1 + growthAnalyze 1 + getHackTime 0.05 + 5 scalars',
   ],
+  // Formulas path: formulas.* are 0 GB; the cost is getServer 2 + getPlayer 0.5,
+  // which replaces the fallback's hackAnalyze/hackAnalyzeChance/growthAnalyze (3 GB).
+  ['/rank-formulas.js', '4.40', 'net 0.25 + getServer 2 + getPlayer 0.5 + formulas 0 + hackingLevel 0.05'],
+  // Free NS only (ns.format, port I/O, ns.write, ns.tprint) — must stay 0-cost so
+  // importing it adds nothing to either rank file.
+  ['/lib/rank-core.js', '1.60', 'base only — pure scoring + free NS (format/ports/write/tprint)'],
   [
     '/daemon.js',
-    '4.85',
-    'net 0.25 + exec 1.3 + scp 0.6 + killall 0.5 + isRunning 0.1 + getHackTime 0.05 + hackingLevel + 4 scalars',
+    '4.95',
+    'net 0.25 + exec 1.3 + scp 0.6 + killall 0.5 + isRunning 0.1 + fileExists 0.1 + getHackTime 0.05 + hackingLevel + 4 scalars',
   ],
   ['/monitor.js', '2.40', 'net 0.25 + 4 scalars + maxRam/usedRam 0.1'],
-  ['/map.js', '2.15', 'scan 0.2 + fileExists 0.1 + reqLevel/maxMoney/numPorts + hasRootAccess'],
-  ['/bootstrap.js', '3.00', 'isRunning 0.1 + exec 1.3 — just a launcher'],
+  ['/map.js', '2.30', 'scan 0.2 + fileExists 0.1 + hasRootAccess 0.05 + numPorts/reqLevel/maxMoney 0.3 + hackingLevel 0.05'],
+  ['/bootstrap.js', '3.10', 'isRunning 0.1 + exec 1.3 + maxRam/usedRam 0.1 — just a launcher'],
   ['/buy-servers.js', '5.75', 'lib/cloud: purchaseServer 2.25 + getServerNames 1.05 + cost/upgrade/limits + scalars'],
   ['/auto-buy.js', '5.75', 'lib/cloud + getServerMoneyAvailable; gates on the daemon RAM-need port (0 GB peek)'],
   ['/share.js', '3.85', 'net 0.25 + exec 1.3 + scp 0.6 + maxRam/usedRam 0.1'],

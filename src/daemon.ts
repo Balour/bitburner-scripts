@@ -28,6 +28,9 @@ const HACK_FILE = '/workers/hack.js';
 const GROW_FILE = '/workers/grow.js';
 const WEAKEN_FILE = '/workers/weaken.js';
 const RANK_FILE = '/rank.js';
+/** Exact-math ranker, used when Formulas.exe is on home; else RANK_FILE. Both emit
+ * the same Target[], so only the file choice differs — batch maths are unchanged. */
+const RANK_FILE_FORMULAS = '/rank-formulas.js';
 const ROOT_FILE = '/root.js';
 
 const HACK_COST = 1.7;
@@ -164,8 +167,10 @@ async function reRank(ns: NS, hosts: string[], copied: Set<string>): Promise<Tar
     ns.print(`  rank: no host with ${RANK_RAM} GB free (home too small, pool empty?)`);
     return null;
   }
+  // Exact grow-thread math when Formulas.exe is present, ratio fallback otherwise.
+  const rankFile = ns.fileExists('Formulas.exe', 'home') ? RANK_FILE_FORMULAS : RANK_FILE;
   if (rankHost !== 'home') {
-    for (const file of [RANK_FILE, '/lib/net.js', '/lib/ports.js']) {
+    for (const file of [rankFile, '/lib/rank-core.js', '/lib/net.js', '/lib/ports.js']) {
       const key = `${rankHost}|${file}`;
       if (!copied.has(key)) {
         ns.scp(file, rankHost);
@@ -174,18 +179,21 @@ async function reRank(ns: NS, hosts: string[], copied: Set<string>): Promise<Tar
     }
   }
   ns.clearPort(PORT_RANK);
-  const pid = ns.exec(RANK_FILE, rankHost, 1);
+  const pid = ns.exec(rankFile, rankHost, 1);
   if (pid === 0) return null;
   await awaitPids(ns, [pid]);
 
   const raw = ns.readPort(PORT_RANK);
   if (typeof raw !== 'string' || raw === 'NULL PORT DATA') {
-    ns.print(`  rank: no data on port (rank.js on ${rankHost} failed?)`);
+    ns.print(`  rank: no data on port (${rankFile} on ${rankHost} failed?)`);
     return null;
   }
   const targets = JSON.parse(raw) as Target[];
   ns.write(TARGETS_FILE, JSON.stringify(targets, null, 2), 'w');
-  ns.print(`  rank on ${rankHost}: ${targets.filter((t) => t.moneyScore > 0).length} hackable of ${targets.length}`);
+  ns.print(
+    `  rank on ${rankHost} via ${rankFile}: ` +
+      `${targets.filter((t) => t.moneyScore > 0).length} hackable of ${targets.length}`,
+  );
   return targets;
 }
 
