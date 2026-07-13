@@ -214,39 +214,55 @@ grows. Purchased servers do NOT survive an augment install (home RAM does); auto
 level-gated or need `SQLInject.exe` (buy on the darkweb — roots the 29 five-port servers at once). Idle
 pool RAM is a symptom of too few targets, not inefficiency.
 
-## `ns.dnet` — the Darknet: real, lucrative, and NOT early
+## `ns.dnet` — the Darknet: verified, and PARKED for this run
 
 New in v3. A second server network layered on the normal one, hidden from `ns.scan`. It constantly
 mutates: servers move, restart (killing your scripts), and go offline. Servers are cracked by
 **guessing passwords**, not by NUKE + port openers. It is **not** the classic TOR darkweb — that is
-still `ns.singularity.purchaseProgram`, and the old `darkweb` server becomes the darknet's entry node.
+still `ns.singularity.purchaseProgram`, and the old `darkweb` server becomes the darknet's entry node
+(**16 GB**). Access is gated behind `DarkscapeNavigator.exe` — **$50M** darkweb / **$30M** Chongqing +
+a TOR router, purely a money gate (no SF, no BitNode lock, no hacking level). Now owned. BN1's darknet
+money multiplier is **1.0** (full); BN9 is 0.05, BN8 disables it.
 
-**Gated behind `DarkscapeNavigator.exe`.** Confirmed in-game:
-`"You do not have access to the dnet api. Purchase \"DarkscapeNavigator.exe\" through your TOR router."`
-It costs **$50M** on the darkweb, or **$30M** at a location in Chongqing, plus a TOR router (~$200k).
-No Source-File, no BitNode lock, no hacking level — the gate is purely money, so it *is* reachable
-without Singularity. BN1's darknet money multiplier is **1.0** (full); BN9 is 0.05, BN8 disables it.
+**Verdict: don't build for it.** We verified against primary source what the darknet gives that money
+*can't* buy, and for *this* run — money-rich, `Formulas.exe` owned, `SQLInject.exe` trivial, plenty of
+RAM, charisma ~80 — the answer is: almost nothing useful. The earlier "caches → cheap port programs /
+Formulas.exe" thesis is **dead**; those caches only mattered while programs were expensive. Direct
+darknet money, cache money, and the abundant darknet RAM are all redundant now. `promoteStock` is dead
+weight without a stock position.
 
-**Do not build for it in run #1's early game.** Access needs $50M you don't have, and everything that
-makes it pay scales with **charisma, which starts at 1**. Early `phishingAttack` is ~5% success,
-~10 s per attempt, ~$50 payout — a charisma trainer, not income.
+**The only genuinely money-unbuyable prize — and why it still doesn't move us:** six darknet-exclusive
+augments, "The Sculptor" set: TheBrokenWings → TheBoots → TheHammer → TheStaff → TheLaw → TheSword.
+`factions: []`, `isSpecial: true`, awarded one per completed deep "labyrinth" in that fixed prereq
+chain (`src/DarkNet/effects/labyrinth.ts` `getLabAugReward`; `src/Augmentation/Augmentations.ts`).
+Their multipliers are self-referential — charisma×, combat×, `dnet_money`×, stasis-link-limit +1,
+auth/heartbleed speed +20%. The **only** effect that touches a hacking money run is **TheSword's
+hacking ×1.10** (+ company_rep ×1.10), sitting at the *end* of a six-labyrinth grind, and it's an
+ordinary installed aug that **wipes on entering the next BitNode** — so it doesn't even bank toward
+the clear-BN1-×3 → SF-1.3 plan.
 
-**Worth returning to mid-run**, because caches are the prize: clearing a server's blocked RAM
-(`memoryReallocation`) drops a `.cache`, and `openCache` rolls one reward from ~5 categories — money
-(**~$10M at difficulty 0**, ×1.2 per difficulty), **free port programs, even Formulas.exe** (else
-$5B), stock-market access, or coding contracts. For a no-Singularity BN1 run where programs are
-bought by hand, that is a serious shortcut.
+**Reward model, corrected (was wrong before):** the cache pool
+(`src/DarkNet/effects/cacheFiles.ts`) is program / stock-market (TIX/WSE) access / stock shares /
+clue data-file / coding contract / money — **no "experience" reward type exists**, and **no
+darknet action grants intelligence XP**; every XP grant is **charisma** only
+(`src/NetscriptFunctions/Darknet.ts`). The programming doc's "caches contain money or experience" line
+is not backed by the reward code — treat as flavor. (The int-XP farm hope, the one money-can't-buy
+accelerator, does not exist here.)
 
-Practical notes: `probe()` only sees servers **directly connected** to the server the script runs on,
-so spreading means `scp`+`exec` hop by hop. The expensive verbs are meant to run **on darknet
-servers**, which have abundant RAM — `setStasisLink` is 12 GB and `induceServerMigration` 4 GB, both
-impossible on an 8 GB home. Instability is zero until you backdoor more than 2 darknet servers.
-`unleashStormSeed()` is a deliberate self-destruct that wipes ~60% of the net — never call it by
-accident. `openCache` costs karma, which is inert without gangs.
+**When to revisit** (neither is now): a real **stock-trading operation** — then `promoteStock` +
+WSE-access caches + `dnet_money` augments form a coherent package — or **BN15**, where the labyrinth
+is a documented route to `TheRedPill` (`getLabAugReward` BN15 branch).
+
+RAM note, corrected: the expensive verbs run **on the net**, not home. The 16 GB entry node fits
+`setStasisLink` (12 GB) + base, and deeper servers have abundant RAM — so the old "impossible on 8 GB
+home" caveat is moot. Other practical facts if we ever do build: `probe()` sees only **directly
+connected** servers (spread via `scp`+`exec` hop by hop); instability is zero until >2 darknet servers
+are backdoored; `unleashStormSeed()` is a deliberate self-destruct that wipes ~60% of the net (never
+call by accident); `openCache` costs karma (inert without gangs). Darknet income is credited under a
+`"darknet"` MoneySource — `MoneySource.casino`/`.servers` are unrelated.
 
 Read-only recon lives in `src/probe/dnet.ts` (`run /probe/dnet.js`); it touches nothing that mutates
-state. Correction to an earlier guess: `MoneySource.casino`/`.servers` are **unrelated** to the
-darknet, whose income is credited under a `"darknet"` source.
+state.
 
 ## Legacy scripts (`../legacy_scripts/`)
 
