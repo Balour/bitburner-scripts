@@ -31,3 +31,33 @@ export function crawl(ns: NS): string[] {
 export function rooted(ns: NS, hosts: string[]): string[] {
   return hosts.filter((host) => ns.hasRootAccess(host));
 }
+
+/**
+ * BFS from `from` (default `home`) to `target`, returning the hop path INCLUDING
+ * both endpoints (`[from, ..., target]`), or `null` if `target` is unreachable.
+ *
+ * Imported alone this costs 0.2 GB (only `ns.scan`) — the parser follows imports
+ * per symbol, so it does NOT drag in `rooted`'s `hasRootAccess`.
+ */
+export function pathTo(ns: NS, target: string, from = 'home'): string[] | null {
+  const seen = new Set<string>([from]);
+  const pending = [from];
+  const parent = new Map<string, string | null>([[from, null]]);
+
+  while (pending.length > 0) {
+    const host = pending.shift() as string;
+    if (host === target) {
+      const route: string[] = [];
+      for (let h: string | null = target; h !== null; h = parent.get(h) ?? null) route.unshift(h);
+      return route;
+    }
+    for (const neighbour of ns.scan(host)) {
+      if (!seen.has(neighbour)) {
+        seen.add(neighbour);
+        parent.set(neighbour, host);
+        pending.push(neighbour);
+      }
+    }
+  }
+  return null;
+}
