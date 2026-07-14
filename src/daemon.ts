@@ -282,7 +282,6 @@ function stepXp(ns: NS, t: Target, slots: Slot[], job: Job, copied: Set<string>,
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
-  ns.ui.openTail();
   ns.print(`daemon ${VERSION} starting (decoupled)`);
 
   // Clear stale pool workers from a previous run. Never home (controllers).

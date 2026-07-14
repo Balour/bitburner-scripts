@@ -7,14 +7,14 @@ import { TARGETS_FILE, VERSION } from './lib/ports';
  * 2.40 GB. Read-only dashboard. Fits beside daemon.js once home is 16 GB
  * (4.40 + 2.40 = 6.80); at 8 GB, run it instead of the daemon, not with it.
  *
- * v3: `ns.tail` is gone (use `ns.ui.openTail`), and `ns.formatNumber` is gone
- * (use `ns.format.*`). Both are 0 GB.
+ * v3: `ns.formatNumber` is gone (use `ns.format.*`, 0 GB).
+ *
+ * Does not open its own tail — tail it on demand from Active Scripts.
  *
  * Run: `run /monitor.js`
  */
 export async function main(ns: NS) {
   ns.disableLog('ALL');
-  ns.ui.openTail();
 
   while (true) {
     ns.clearLog();

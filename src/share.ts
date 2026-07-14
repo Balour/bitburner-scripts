@@ -21,7 +21,6 @@ const CYCLE_MS = 10500; // just over ShareBonusTime so workers exit before relau
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
-  ns.ui.openTail();
   ns.print(`share ${VERSION} starting`);
   const flags = ns.flags([['cap', 0.6]]);
   const cap = Number(flags.cap);
