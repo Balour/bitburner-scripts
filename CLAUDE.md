@@ -122,6 +122,22 @@ module and matches it against the RAM cost table. It never checks that the name 
 > 0.1/0.15/0.15. `exec` 1.3, `run` 1.0, `getServer` 2.0. Anything named `document` or `window` costs
 > **25 GB**. This is multiplied per thread on workers. It bit us once already: a probe named its
 > local `const getServer`, silently paid 2 GB, and nearly produced the wrong conclusion.
+>
+> **It is not just names you choose — it is every property you *read*.** `RamCalculations.ts` walks
+> `MemberExpression` into `node.property`, and `findFunc` searches the cost table **recursively by
+> bare name**, ignoring namespaces. So reading a field off an NS return value is charged whenever
+> that field's name collides with *any* API, at any depth. Measured: `getGangInformation()` returns
+> a `respectForNextRecruit` field, and merely reading `info.respectForNextRecruit` bills **1 GB**
+> for `ns.gang.respectForNextRecruit()` — a function the script never calls. Likewise `member.hack`
+> costs 0.1 GB. (`member.moneyGain` / `.respectGain` / `.wantedPenalty` collide with
+> `ns.formulas.gang.*`, which are 0 GB, so those happen to be free.)
+>
+> **The dodge, when the collision is expensive:** a string-literal bracket access is invisible to
+> the parser — `info['respectForNextRecruit']` costs nothing and reads the same plain object, so
+> there is no dynamic cost either. Unlike the `ramOverride` tricks below, this is not deferral: no
+> NS function is ever called, so nothing is owed. Comment it where you use it, or someone will
+> "clean it up" back to dot notation and silently re-add the GB. `run /probe/ram/budget.js` is what
+> catches this — it is the only reason we found it.
 
 **The dynamic check kills you.** `dynamicRamUsage` accumulates the true cost of each distinct NS
 function actually called. The moment it exceeds the reservation, the game calls `killWorkerScript`
@@ -174,9 +190,19 @@ Player's stated preferences:
 ## The automation stack (built)
 
 The ladder above is realized. `run /bootstrap.js` after any reset launches the whole self-driving
-machine; measured **~$7.8M/sec** on a mature run. Every persistent script prints `VERSION` (in
-`lib/ports.ts`) on start — bump it on any change, glance at the tail to confirm the sync pushed current
-code, not stale. `run /probe/ram/budget.js` verifies every script's static RAM against its budget.
+machine; measured **~$7.8M/sec** on a mature run. `run /probe/ram/budget.js` verifies every script's
+static RAM against its budget.
+
+**Two version numbers, and they answer different questions.** Every persistent script prints both, as
+`daemon v1 [build v17]`:
+
+| | Where | Bump when | Answers |
+|---|---|---|---|
+| `REV` | a local `const` in each script | *that script's* behaviour changes | "which revision of this script is running?" |
+| `VERSION` | `lib/ports.ts`, shared | *any* change, anywhere | "did the sync push my code, or is the game running stale code?" |
+
+`VERSION` alone can't tell you a script's revision — it moves when an unrelated file changes. `REV`
+alone can't detect a stale sync — it doesn't move when someone else's file changes. Keep both.
 
 - **`bootstrap.ts`** — RAM-adaptive launcher. Starts only the scripts that fit the current home, in
   priority order (daemon → monitor → auto-buy → share), leaving `LAUNCH_HEADROOM` for root's exec.
