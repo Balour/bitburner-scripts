@@ -17,13 +17,15 @@ import { VERSION } from './lib/ports';
  * Run: `run /bootstrap.js`
  */
 /** This script's own revision — bump when THIS script's behaviour changes. */
-const REV = 'v2';
+const REV = 'v3';
 
 const STACK = [
   { file: '/daemon.js', ram: 4.85, why: 'root + rank + decoupled hacking' },
   { file: '/monitor.js', ram: 2.4, why: 'dashboard' },
   { file: '/auto-buy.js', ram: 6.05, why: 'compound income into pool RAM' },
   { file: '/share.js', ram: 3.85, why: 'reputation from idle RAM' },
+  // Lowest priority: self-gates on a cash floor, so it only spends surplus the rest can't use.
+  { file: '/hacknet.js', ram: 7.2, why: 'mop surplus cash into hacknet (bridge income)' },
 ];
 /** Launched ahead of the rest whenever we have a gang. Where hacking is throttled (BN2 caps
  * ServerMaxMoney at 0.08) the gang is the economy, not a side-channel — it out-earns the daemon

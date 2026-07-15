@@ -45,7 +45,11 @@ const BUDGET = [
   ],
   ['/gang/found.js', '2.60', 'createGang 1 — inGang and ns.enums are 0 GB'],
   ['/gang/ascend.js', '8.70', 'memberNames 1 + getAscensionResult 2 + ascendMember 4 + hack 0.1'],
-  ['/gang/equip.js', '12.70', 'memberNames 1 + memberInfo 2 + equipType 2 + equipCost 2 + purchase 4 + money 0.1'],
+  [
+    '/gang/equip.js',
+    '16.70',
+    'gangInfo 2 + memberNames 1 + memberInfo 2 + equipType 2 + equipStats 2 + equipCost 2 + purchase 4 + money 0.1',
+  ],
   ['/gang/territory.js', '11.60', 'gangInfo 2 + allGangInfo 2 + clashChance 4 + setWarfare 2'],
   // 1.70, not 1.60: reading `member.hack` in the scoring math collides with ns.hack in the static
   // parser's flat name table. `member.moneyGain`/`.respectGain` collide with ns.formulas.gang.* —
@@ -54,6 +58,7 @@ const BUDGET = [
   ['/buy-servers.js', '5.75', 'lib/cloud: purchaseServer 2.25 + getServerNames 1.05 + cost/upgrade/limits + scalars'],
   ['/auto-buy.js', '5.75', 'lib/cloud + getServerMoneyAvailable; gates on the daemon RAM-need port (0 GB peek)'],
   ['/share.js', '3.85', 'net 0.25 + exec 1.3 + scp 0.6 + maxRam/usedRam 0.1'],
+  ['/hacknet.js', '7.20', 'money 0.1 + 11 distinct hacknet.* at 0.5 each = 5.5 (NOT 0 GB)'],
   ['/workers/share.js', '4.00', 'base + share 2.4 — one-shot, re-launched by share.js'],
   ['/contracts/catalog.js', '1.60', 'getContractTypes is 0 GB'],
   // Imports only `crawl`, so it pays scan 0.2 but NOT `rooted`'s hasRootAccess.
