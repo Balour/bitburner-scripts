@@ -18,6 +18,9 @@ interface Node {
   depth: number;
 }
 
+/** This script's own revision — bump when THIS script's behaviour changes. */
+const REV = 'v1';
+
 export async function main(ns: NS) {
   const level = ns.getHackingLevel();
 
@@ -77,7 +80,7 @@ export async function main(ns: NS) {
   for (const { depth } of nodes) depthCounts.set(depth, (depthCounts.get(depth) ?? 0) + 1);
 
   ns.tprint('');
-  ns.tprint(`=== network map ${VERSION} (hacking ${level}) ===`);
+  ns.tprint(`=== network map ${REV} [build ${VERSION}] (hacking ${level}) ===`);
   ns.tprint(`  found ${nodes.length} servers, max depth ${maxDepth} — crawl reaches every level`);
   ns.tprint(`  ${rooted} rooted (named) + ${purchased} purchased | hackable now: ${hackable}`);
   ns.tprint('');

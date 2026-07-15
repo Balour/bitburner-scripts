@@ -15,13 +15,16 @@ import { HOME_RESERVE, VERSION } from './lib/ports';
  *   run /share.js                 use up to 60% of spare pool
  *   run /share.js --cap 0.3       use up to 30%
  */
+/** This script's own revision — bump when THIS script's behaviour changes. */
+const REV = 'v1';
+
 const WORKER = '/workers/share.js';
 const SHARE_COST = 4.0;
 const CYCLE_MS = 10500; // just over ShareBonusTime so workers exit before relaunch
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
-  ns.print(`share ${VERSION} starting`);
+  ns.print(`share ${REV} [build ${VERSION}] starting`);
   const flags = ns.flags([['cap', 0.6]]);
   const cap = Number(flags.cap);
   const copied = new Set<string>();

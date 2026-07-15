@@ -15,6 +15,9 @@ import { buyRound, purchasedRam } from './lib/cloud';
  *   run /auto-buy.js                    keep $100M reserve
  *   run /auto-buy.js --reserve 5e8      keep $500M for augments
  */
+/** This script's own revision — bump when THIS script's behaviour changes. */
+const REV = 'v1';
+
 export async function main(ns: NS) {
   ns.disableLog('ALL');
   const flags = ns.flags([
@@ -23,7 +26,7 @@ export async function main(ns: NS) {
   ]);
   const reserve = Number(flags.reserve);
   const intervalMs = Number(flags.interval) * 1000;
-  ns.print(`auto-buy ${VERSION} starting`);
+  ns.print(`auto-buy ${REV} [build ${VERSION}] starting`);
 
   while (true) {
     const need = ns.peek(PORT_RAMNEED); // '1' when hacking is genuinely RAM-starved

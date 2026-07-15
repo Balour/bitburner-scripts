@@ -280,9 +280,12 @@ function stepXp(ns: NS, t: Target, slots: Slot[], job: Job, copied: Set<string>,
   job.phase = 'xp';
 }
 
+/** This script's own revision — bump when THIS script's behaviour changes. */
+const REV = 'v1';
+
 export async function main(ns: NS) {
   ns.disableLog('ALL');
-  ns.print(`daemon ${VERSION} starting (decoupled)`);
+  ns.print(`daemon ${REV} [build ${VERSION}] starting (decoupled)`);
 
   // Clear stale pool workers from a previous run. Never home (controllers).
   for (const host of rooted(ns, crawl(ns))) {

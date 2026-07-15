@@ -13,6 +13,9 @@ import { TARGETS_FILE, VERSION } from './lib/ports';
  *
  * Run: `run /monitor.js`
  */
+/** This script's own revision — bump when THIS script's behaviour changes. */
+const REV = 'v1';
+
 export async function main(ns: NS) {
   ns.disableLog('ALL');
 
@@ -30,7 +33,7 @@ export async function main(ns: NS) {
       used += ns.getServerUsedRam(host);
     }
 
-    ns.print(`monitor ${VERSION}  hacking ${ns.getHackingLevel()}`);
+    ns.print(`monitor ${REV} [build ${VERSION}]  hacking ${ns.getHackingLevel()}`);
     ns.print(`pool    ${ns.format.ram(used)} / ${ns.format.ram(capacity)} across ${hosts.length} host(s)`);
     ns.print('');
 
