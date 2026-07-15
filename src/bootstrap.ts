@@ -16,12 +16,22 @@ import { VERSION } from './lib/ports';
  *
  * Run: `run /bootstrap.js`
  */
+/** This script's own revision — bump when THIS script's behaviour changes. */
+const REV = 'v2';
+
 const STACK = [
   { file: '/daemon.js', ram: 4.85, why: 'root + rank + decoupled hacking' },
   { file: '/monitor.js', ram: 2.4, why: 'dashboard' },
   { file: '/auto-buy.js', ram: 6.05, why: 'compound income into pool RAM' },
   { file: '/share.js', ram: 3.85, why: 'reputation from idle RAM' },
 ];
+/** Launched ahead of the rest whenever we have a gang. Where hacking is throttled (BN2 caps
+ * ServerMaxMoney at 0.08) the gang is the economy, not a side-channel — it out-earns the daemon
+ * and is the only source of faction rep, so it gets first claim on home RAM.
+ *
+ * It reserves ~13 GB and execs helpers up to ~12.7 GB on top, hence the fatter headroom. */
+const GANG = { file: '/gang.js', ram: 13.1, why: 'gang: money + faction rep (the BN2 economy)' };
+const GANG_HEADROOM = 13;
 /** Leave this much home RAM free after each launch, so the daemon can still exec
  * root.js (2.4 GB) on home. rank.js runs remotely when home is too small for it,
  * so we do NOT reserve its 5.45 GB here — that would skip the daemon on an 8 GB home. */
@@ -29,16 +39,20 @@ const LAUNCH_HEADROOM = 3;
 
 export async function main(ns: NS) {
   ns.tprint('');
-  ns.tprint(`=== bootstrap ${VERSION} ===`);
+  ns.tprint(`=== bootstrap ${REV} [build ${VERSION}] ===`);
   const homeMax = ns.getServerMaxRam('home');
 
-  for (const { file, ram, why } of STACK) {
+  // `inGang` is 0 GB, so this check is free even on a fresh 8 GB home in a gangless BitNode.
+  const stack = ns.gang.inGang() ? [GANG, ...STACK] : STACK;
+
+  for (const { file, ram, why } of stack) {
+    const headroom = file === GANG.file ? GANG_HEADROOM : LAUNCH_HEADROOM;
     if (ns.isRunning(file, 'home')) {
       ns.tprint(`  running:  ${file}`);
       continue;
     }
     const free = homeMax - ns.getServerUsedRam('home');
-    if (free < ram + LAUNCH_HEADROOM) {
+    if (free < ram + headroom) {
       ns.tprint(`  skip:     ${file.padEnd(14)} — needs ${ram} GB + headroom, home has ${ns.format.ram(free)} free`);
       continue;
     }

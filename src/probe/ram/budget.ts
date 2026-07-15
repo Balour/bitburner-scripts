@@ -29,8 +29,28 @@ const BUDGET = [
     'net 0.25 + exec 1.3 + scp 0.6 + killall 0.5 + isRunning 0.1 + fileExists 0.1 + getHackTime 0.05 + hackingLevel + 4 scalars',
   ],
   ['/monitor.js', '2.40', 'net 0.25 + 4 scalars + maxRam/usedRam 0.1'],
-  ['/map.js', '2.30', 'scan 0.2 + fileExists 0.1 + hasRootAccess 0.05 + numPorts/reqLevel/maxMoney 0.3 + hackingLevel 0.05'],
-  ['/bootstrap.js', '3.10', 'isRunning 0.1 + exec 1.3 + maxRam/usedRam 0.1 — just a launcher'],
+  [
+    '/map.js',
+    '2.30',
+    'scan 0.2 + fileExists 0.1 + hasRootAccess 0.05 + numPorts/reqLevel/maxMoney 0.3 + hackingLevel 0.05',
+  ],
+  ['/bootstrap.js', '3.10', 'isRunning 0.1 + exec 1.3 + maxRam/usedRam 0.1 + inGang 0 — just a launcher'],
+  // Gang. Split deliberately: one script referencing the whole gang API costs ~37 GB, which does
+  // not fit the 32 GB home a fresh BitNode gives you. The controller holds only the cheap loop and
+  // execs the expensive helpers one at a time, so peak is ~26 GB, not 37.
+  [
+    '/gang.js',
+    '13.20',
+    'gangInfo 2 + memberNames 1 + memberInfo 2 + recruit 2 + setTask 2 + taskStats 1 + exec 1.3 + fileExists 0.1 + money 0.1 + hack 0.1',
+  ],
+  ['/gang/found.js', '2.60', 'createGang 1 — inGang and ns.enums are 0 GB'],
+  ['/gang/ascend.js', '8.70', 'memberNames 1 + getAscensionResult 2 + ascendMember 4 + hack 0.1'],
+  ['/gang/equip.js', '12.70', 'memberNames 1 + memberInfo 2 + equipType 2 + equipCost 2 + purchase 4 + money 0.1'],
+  ['/gang/territory.js', '11.60', 'gangInfo 2 + allGangInfo 2 + clashChance 4 + setWarfare 2'],
+  // 1.70, not 1.60: reading `member.hack` in the scoring math collides with ns.hack in the static
+  // parser's flat name table. `member.moneyGain`/`.respectGain` collide with ns.formulas.gang.* —
+  // which are 0 GB, so those are free. Importing only the constants from here still costs nothing.
+  ['/lib/gang.js', '1.70', 'base + hack 0.1 (property-name collision) — pure math, no NS calls'],
   ['/buy-servers.js', '5.75', 'lib/cloud: purchaseServer 2.25 + getServerNames 1.05 + cost/upgrade/limits + scalars'],
   ['/auto-buy.js', '5.75', 'lib/cloud + getServerMoneyAvailable; gates on the daemon RAM-need port (0 GB peek)'],
   ['/share.js', '3.85', 'net 0.25 + exec 1.3 + scp 0.6 + maxRam/usedRam 0.1'],
