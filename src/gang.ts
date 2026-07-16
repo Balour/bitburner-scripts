@@ -2,6 +2,7 @@ import type { NS } from '@ns';
 import type { GangInfo, MemberInfo, TaskStats } from './lib/gang';
 import {
   GANG_CASH_RESERVE,
+  EARN_UNLOCK_RESPECT,
   MAX_MEMBERS,
   POWER_MAINTAIN,
   POWER_MEMBERS,
@@ -40,8 +41,11 @@ import { PORT_GANG, VERSION } from './lib/ports';
  * when it's the fraction of gains KEPT. Now shown as the game does — a reduction (-2.08%).
  * v4: added an `invested` line (owned augs/gear + cash vs reserve) so gang spending is visible —
  * equip.js reports nothing itself. Reworked equip.js to fund durable augs down to a cash reserve
- * rather than a stingy 10% slice, so idle cash actually flows into the gang. */
-const REV = 'v4';
+ * rather than a stingy 10% slice, so idle cash actually flows into the gang.
+ * v5: members now TRAIN until they can do a high-tier task instead of settling on Mug. Exp scales
+ * with difficulty^0.9, so mugging builds stats ~63x slower than Train Combat — the ranker's
+ * respect-priority was keeping members weak and stalling the whole gang below the stat wall. */
+const REV = 'v5';
 
 const HELPERS = ['/gang/ascend.js', '/gang/equip.js', '/gang/territory.js'];
 /** Ticks between helper launches. One at a time, so peak RAM stays bounded. */
@@ -157,18 +161,28 @@ function assign(
   const training = info.isHacking ? TASK_TRAIN_HACKING : TASK_TRAIN_COMBAT;
   const plan = new Map<string, string>();
 
-  // A member whose best task still scores 0 is too weak to do anything useful yet.
   const ranked = members
     .map((member) => {
       const best = earning.map((task) => ({ task, value: score(member, task) })).sort((a, b) => b.value - a.value)[0];
-      return { member, task: best?.task.name ?? training, value: best?.value ?? 0 };
+      return { member, task: best?.task, value: best?.value ?? 0 };
     })
     .sort((a, b) => b.value - a.value);
 
-  const trainees = ranked.filter((entry) => entry.value <= 0);
-  const earners = ranked.filter((entry) => entry.value > 0);
+  // Earn only once a member can do a HIGH-TIER task; below that, TRAIN — do not settle for mugging.
+  // This is the fix for the gang stalling: exp gain scales with difficulty^0.9, so Mug (difficulty 1)
+  // builds stats ~63x slower than Train Combat (difficulty 100). A member left mugging earns a
+  // trickle but crawls toward the stat wall forever. Training rushes them to where a real task —
+  // Terrorism, baseRespect 0.01, ~200x Mug's — goes net-positive, at which point the ranker picks it
+  // and respect (hence rep) jumps orders of magnitude. The threshold cleanly separates the top tier
+  // (Terrorism/Human Trafficking/Cyberterrorism/Money Laundering) from the low-tier trickle tasks.
+  const earners: typeof ranked = [];
+  const trainees: typeof ranked = [];
+  for (const entry of ranked) {
+    const ready = entry.task && entry.value > 0 && entry.task.baseRespect >= EARN_UNLOCK_RESPECT;
+    (ready ? earners : trainees).push(entry);
+  }
   for (const entry of trainees) plan.set(entry.member.name, training);
-  for (const entry of earners) plan.set(entry.member.name, entry.task);
+  for (const entry of earners) plan.set(entry.member.name, entry.task!.name);
 
   // Power only accrues from members actually sitting on Territory Warfare. Don't stall recruiting
   // for it, and never send trainees — power is stats/95, so they contribute nothing anyway.
@@ -240,8 +254,10 @@ function status(ns: NS, info: GangInfo, members: MemberInfo[], plan: Map<string,
     `  territory ${ns.format.percent(info.territory)}  power ${ns.format.number(info.power)}  ` +
       `${info.territoryWarfareEngaged ? 'CLASHING' : 'peace'} (min win ${ns.format.percent(warfare.minChance)})`,
   );
+  const training = count(TASK_TRAIN_COMBAT) + count(TASK_TRAIN_HACKING);
+  const parked = training + count(TASK_WARFARE) + count(TASK_VIGILANTE);
   ns.print(
-    `  tasks     ${count(TASK_TRAIN_COMBAT) + count(TASK_TRAIN_HACKING)} training, ` +
+    `  tasks     ${plan.size - parked} earning, ${training} training, ` +
       `${count(TASK_WARFARE)} warfare, ${count(TASK_VIGILANTE)} vigilante`,
   );
 }

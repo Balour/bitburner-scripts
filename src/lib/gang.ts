@@ -38,6 +38,11 @@ export const FOUNDER_PREFERENCE = [
 ] as const;
 
 export const MAX_MEMBERS = 12;
+/** baseRespect that marks a "real" earning task worth doing over training. Above it: Terrorism
+ * (0.01), Cyberterrorism (0.01), Human Trafficking (0.004), Money Laundering (0.001). Below it: the
+ * low-tier trickle (Mug 0.00005, Strongarm, Armed Robbery, ...) that a member should train past
+ * rather than settle on, since mugging's difficulty-1 builds stats ~63x slower than training. */
+export const EARN_UNLOCK_RESPECT = 0.001;
 /** Gang respect converts to faction rep at this divisor (GangConstants.GangRespectToReputationRatio). */
 export const RESPECT_TO_REP = 75;
 
