@@ -211,6 +211,41 @@ export function npcPowerRate(faction: string, power: number, territory: number):
 }
 
 /**
+ * Clashes per update that involve US. The engine loops over every gang holding territory (plus us)
+ * and each picks ONE random opponent, skipping the roll only for pairs we're in. Two gangs left
+ * (us + one rival) means literally 2. Seven gangs means we are `thisGang` once and get picked by one
+ * of the other six with probability 1/6 each — also 2, in expectation. Stable either way.
+ */
+const CLASHES_PER_UPDATE = 2;
+/** `calculateTerritoryGain`: `powerBonus * 0.0001 * (Math.random() + 0.5)`. The roll averages 1.0,
+ * so this is the whole per-clash coefficient, as a fraction of the ENTIRE map (0.0001 = 0.01pp). */
+const TERRITORY_GAIN_COEFF = 0.0001;
+
+/** `Math.max(1, 1 + Math.log(win.power / lose.power) / Math.log(50))`. Note the floor: a weaker
+ * winner gets no penalty, only a stronger one gets a bonus — and it is logarithmic, so even a 50x
+ * power lead only doubles the take. Territory is slow by design. */
+function powerBonus(winPower: number, losePower: number): number {
+  return Math.max(1, 1 + Math.log(winPower / losePower) / Math.log(50));
+}
+
+/**
+ * Net share of the map we take from a rival per update, once clashing. Negative while we're losing.
+ *
+ * Verified against two live snapshots ~28 updates apart: predicted +0.406pp, observed +0.428pp.
+ *
+ * This is a CONSERVATIVE projection when used for an eta — it holds the current win chance and power
+ * ratio fixed, but both improve as the rival's power collapses (they shed 1% per clash they lose
+ * against a gain capped at 0.85). Expect to arrive early, not late.
+ */
+export function territoryRate(ourPower: number, rivalPower: number): number {
+  if (rivalPower <= 0 || ourPower <= 0) return 0;
+  const win = ourPower / (ourPower + rivalPower);
+  const gain = win * powerBonus(ourPower, rivalPower);
+  const loss = (1 - win) * powerBonus(rivalPower, ourPower);
+  return CLASHES_PER_UPDATE * (gain - loss) * TERRITORY_GAIN_COEFF;
+}
+
+/**
  * Updates of warfare needed before `getChanceToWinClash` against this rival reaches `target`, given
  * both sides' power and growth. Infinity when our rate never outruns theirs — the case that makes
  * staffing warfare a pure loss. Win chance is exactly `ours / (ours + theirs)`, so the target is

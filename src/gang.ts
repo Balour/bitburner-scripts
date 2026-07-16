@@ -21,6 +21,7 @@ import {
   moneyScore,
   ourPowerRate,
   respectScore,
+  territoryRate,
   updatesToChance,
   wantedGain,
 } from './lib/gang';
@@ -64,8 +65,11 @@ import { PORT_GANG, PORT_GANG_BUILD, VERSION } from './lib/ports';
  * v8: publishes `building` on PORT_GANG_BUILD. resetGangs() starts every gang at power 1, so a fresh
  * BitNode reads a 0.5 clash chance against all six rivals from tick one — enough to clear the engage
  * floor with a 3-member roster and nobody on warfare. territory.js now needs this flag to start a
- * war. Untestable from a mature save; found by reading resetGangs, not by running. */
-const REV = 'v8';
+ * war. Untestable from a mature save; found by reading resetGangs, not by running.
+ * v9: status shows the conquest eta while clashing instead of a meaningless `eta 0` (the build eta
+ * measures time to the ENGAGE floor, which is behind us by then). Rate math verified live: predicted
+ * +0.406pp over ~28 updates, observed +0.428pp. */
+const REV = 'v9';
 
 const HELPER_ASCEND = '/gang/ascend.js';
 const HELPERS = [HELPER_ASCEND, '/gang/equip.js', '/gang/territory.js'];
@@ -79,6 +83,7 @@ interface Warfare {
   minChance: number;
   rivalPower: number;
   rivalRate: number;
+  rivalTerritory: number;
 }
 
 /**
@@ -91,7 +96,7 @@ interface Warfare {
  */
 function readWarfare(ns: NS): Warfare {
   const raw = ns.peek(PORT_GANG);
-  const fallback: Warfare = { engaged: false, minChance: 0, rivalPower: 0, rivalRate: 0 };
+  const fallback: Warfare = { engaged: false, minChance: 0, rivalPower: 0, rivalRate: 0, rivalTerritory: 0 };
   if (typeof raw !== 'string' || raw.startsWith('NULL')) return fallback;
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   const num = (value: unknown, dflt: number): number =>
@@ -101,6 +106,7 @@ function readWarfare(ns: NS): Warfare {
     minChance: num(parsed.minChance, 0),
     rivalPower: num(parsed.rivalPower, 0),
     rivalRate: num(parsed.rivalRate, 0),
+    rivalTerritory: num(parsed.rivalTerritory, 0),
   };
 }
 
@@ -337,19 +343,34 @@ function status(
     `  territory ${ns.format.percent(info.territory)}  power ${ns.format.number(info.power)}  ` +
       `${info.territoryWarfareEngaged ? 'CLASHING' : 'peace'} (min win ${ns.format.percent(warfare.minChance)})`,
   );
-  // The race, made visible: our rate must beat the rival's or warfare is a pure loss. `eta` is time
-  // to CLASH_ENGAGE_FLOOR at the current rates — if it reads Infinity the roster is too weak and the
-  // gate correctly has everyone earning instead.
+  // The race, made visible: our power rate must beat the rival's or warfare is a pure loss.
   const rate = ourPowerRate(
     info,
     members.filter((member) => plan.get(member.name) === TASK_WARFARE),
   );
-  const eta = updatesToChance(info.power, rate, warfare.rivalPower, warfare.rivalRate, CLASH_ENGAGE_FLOOR);
   ns.print(
     `  power/upd ${ns.format.number(rate)} vs rival ${ns.format.number(warfare.rivalRate)}` +
-      ` (${ns.format.number(warfare.rivalPower)} pow)` +
-      `${building ? `  BUILDING, eta ${Number.isFinite(eta) ? ns.format.time(eta * POWER_UPDATE_MS) : 'never'}` : ''}`,
+      ` (${ns.format.number(warfare.rivalPower)} pow)`,
   );
+
+  // Two different questions, and only one is meaningful at a time. Before clashing, the number that
+  // matters is time to CLASH_ENGAGE_FLOOR ('never' = the roster can't win and the gate is correctly
+  // keeping everyone on income). Once clashing, that eta is 0 and says nothing — what matters is how
+  // long until the rival's territory is ours. The conquest eta holds the CURRENT win chance and power
+  // ratio fixed, both of which improve as the rival's power collapses, so it reads long and arrives
+  // early.
+  const time = (updates: number): string => (Number.isFinite(updates) ? ns.format.time(updates * POWER_UPDATE_MS) : '');
+  if (warfare.engaged) {
+    const rush = territoryRate(info.power, warfare.rivalPower);
+    const eta = rush > 0 ? warfare.rivalTerritory / rush : Infinity;
+    ns.print(
+      `  conquest  +${ns.format.percent(rush * 180, 3)}/hr, ${ns.format.percent(warfare.rivalTerritory)} left` +
+        ` — ${rush > 0 ? `<= ${time(eta)}` : 'LOSING GROUND'}${building ? '  (roster still building)' : ''}`,
+    );
+  } else if (building) {
+    const eta = updatesToChance(info.power, rate, warfare.rivalPower, warfare.rivalRate, CLASH_ENGAGE_FLOOR);
+    ns.print(`  building  to ${ns.format.percent(CLASH_ENGAGE_FLOOR)} win — eta ${time(eta) || 'never'}`);
+  }
   const training = count(TASK_TRAIN_COMBAT) + count(TASK_TRAIN_HACKING);
   const parked = training + count(TASK_WARFARE) + count(TASK_VIGILANTE);
   ns.print(

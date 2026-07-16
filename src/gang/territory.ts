@@ -36,6 +36,8 @@ export async function main(ns: NS) {
   const worst = chances.length > 0 ? rivals[chances.indexOf(minChance)] : undefined;
   const rivalPower = worst ? all[worst].power : 0;
   const rivalRate = worst ? npcPowerRate(worst, all[worst].power, all[worst].territory) : 0;
+  // What's left to take from them — the numerator of the conquest eta.
+  const rivalTerritory = worst ? all[worst].territory : 0;
 
   // Never START a war we aren't investing in. A fresh BitNode hands every gang power 1 and territory
   // 1/7, so minChance reads exactly 0.5 against everyone from the first tick — clearing the engage
@@ -55,5 +57,5 @@ export async function main(ns: NS) {
   }
 
   ns.clearPort(PORT_GANG);
-  ns.writePort(PORT_GANG, JSON.stringify({ engaged, minChance, rivalPower, rivalRate }));
+  ns.writePort(PORT_GANG, JSON.stringify({ engaged, minChance, rivalPower, rivalRate, rivalTerritory }));
 }
