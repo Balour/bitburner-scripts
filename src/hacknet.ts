@@ -22,12 +22,16 @@ import { VERSION } from './lib/ports';
  *
  * Run: `run /hacknet.js`
  */
-const REV = 'v2';
+const REV = 'v3';
 
-/** Only spend cash ABOVE this. Hacknet is the lowest-priority claim on money — it takes only what
- * the gang and manual buys don't need. Sits above the gang's $50m reserve so the gang keeps first
- * claim on the lower tranche. Raise it when you want cash to bank toward billion-dollar gang augs. */
-const CASH_FLOOR = 1e8;
+/** Only spend cash ABOVE this. Kept LOW so hacknet bootstraps fast after an install — augment
+ * installs wipe hacknet (prestigeAugmentation: hacknetNodes.length = 0), the gang produces $0 while
+ * it earns respect on Terrorism, and your money resets, so hacknet rebuilding the money engine is
+ * the priority and the only competing claim early is your own manual mugging. The gang survives
+ * installs with its gear (only ascension wipes gear), so it needs no cash here. Late-game this low
+ * floor is harmless: the payback gate stops hacknet once it's maxed, so it won't drain a big pile.
+ * Raise it only while deliberately banking cash for a large personal-augment batch. */
+const CASH_FLOOR = 5e6;
 /** The ROI gate IS the ceiling: never buy an upgrade that takes longer than this to pay for itself.
  * This is the knob — lower it to invest less in hacknet, raise it to push harder. Fixed level/ram/
  * core caps turned out to be the wrong tool: a node's leveling and RAM ROI *improve* as its other
