@@ -15,7 +15,9 @@ export async function main(ns: NS) {
   const found: { host: string; file: string }[] = [];
 
   for (const host of crawl(ns)) {
-    for (const file of ns.ls(host, '.cct')) found.push({ host, file });
+    // ns.ls filters by SUBSTRING, so '.cct' also matches /data/*.cct.json dumps. Real contracts
+    // end in exactly '.cct'.
+    for (const file of ns.ls(host, '.cct')) if (file.endsWith('.cct')) found.push({ host, file });
   }
 
   ns.write(CONTRACTS_FILE, JSON.stringify(found, null, 2), 'w');
