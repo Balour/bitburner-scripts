@@ -126,21 +126,13 @@ export const GEAR_BUDGET_FRACTION = 0.05;
  * instead of parking on a task it can never cash in.
  */
 export const POWER_MEMBERS = MAX_MEMBERS;
-/** ...and kept there afterwards, since NPC gangs keep growing power passively. Only safe once we
- * are DOMINANT — see POWER_RELEASE_FLOOR, which is what gates dropping to it. */
-export const POWER_MAINTAIN = 2;
 /**
- * Win chance below which the FULL roster stays on warfare even while clashing.
+ * Win chance at which we consider ourselves DOMINANT.
  *
- * Standing down at the engage floor would collapse us. Our power decays `(1-w) * 0.008 * power` per
- * update on a loss — ~20/update at 50/50 and power ~5,000 — and POWER_MAINTAIN's two members
- * generate ~0.5/update. Power craters, the win chance slides back to the disengage floor, and the
- * script flaps forever without ever crushing anyone. Solving the steady state
- * `(1-w)*0.008*X = ourRate`, `w*0.01*Y = rivalRate`, `w = X/(X+Y)`: with the full roster it runs
- * away to w -> 1 (their power collapses to ~123); with only two it converges DOWNWARD and we lose.
- *
- * Above this floor the rival is crushed (power ~130) and two members hold the lead for days, so the
- * other ten go back to earning while territory grinds up.
+ * No longer used to stand the roster down — that was a mistake, measured: releasing here cost ~96%
+ * of our power rate and would have roughly tripled the conquest. Staffing now holds until the rival
+ * has no territory left (see gang.ts). This survives only as territory.js's "may we stay in a war we
+ * are already winning" test, for the window after the roster stands down.
  */
 export const POWER_RELEASE_FLOOR = 0.9;
 /**
@@ -220,6 +212,32 @@ const CLASHES_PER_UPDATE = 2;
 /** `calculateTerritoryGain`: `powerBonus * 0.0001 * (Math.random() + 0.5)`. The roll averages 1.0,
  * so this is the whole per-clash coefficient, as a fraction of the ENTIRE map (0.0001 = 0.01pp). */
 const TERRITORY_GAIN_COEFF = 0.0001;
+
+/** `Gang.clash(false)` does `power *= 1 / 1.008` — the fraction we shed per clash LOST. */
+const POWER_LOSS_PER_CLASH = 1 - 1 / 1.008;
+/** Staff this multiple of break-even onto warfare, so power drifts up rather than sitting on a knife
+ * edge as the rival's power wobbles around its equilibrium. */
+const POWER_HOLD_MARGIN = 2;
+
+/**
+ * Member-power needed on Territory Warfare to stop our power decaying — the size of the garrison.
+ *
+ * The useful identity: our decay is `(1 - win) * clashes * 0.00794 * ourPower`, and since
+ * `1 - win = rivalPower / (ourPower + rivalPower)`, that whole product collapses to approximately
+ * `rivalPower * 0.0159` once we're well ahead. It is **independent of our own power** — a small
+ * constant set by whatever the rival has left. Against a rival pinned at ~56 power that is ~0.9 per
+ * update, which a couple of weak members cover; there is no need to hold a crushed enemy down with
+ * the whole roster.
+ *
+ * Divides by territory because our gain is `0.015 * territory * memberTotal` — so the garrison
+ * SHRINKS as we conquer, freeing members to earn exactly as the war winds down.
+ */
+export function powerToHold(ourPower: number, rivalPower: number, territory: number): number {
+  if (rivalPower <= 0 || ourPower <= 0) return 0;
+  const win = ourPower / (ourPower + rivalPower);
+  const decay = (1 - win) * CLASHES_PER_UPDATE * POWER_LOSS_PER_CLASH * ourPower;
+  return (decay * POWER_HOLD_MARGIN) / (POWER_GAIN_COEFF * Math.max(0.002, territory));
+}
 
 /** `Math.max(1, 1 + Math.log(win.power / lose.power) / Math.log(50))`. Note the floor: a weaker
  * winner gets no penalty, only a stronger one gets a bonus — and it is logarithmic, so even a 50x

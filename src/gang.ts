@@ -6,9 +6,7 @@ import {
   EARN_UNLOCK_RESPECT,
   MAX_MEMBERS,
   POWER_BUILD_MAX_MS,
-  POWER_MAINTAIN,
   POWER_MEMBERS,
-  POWER_RELEASE_FLOOR,
   POWER_UPDATE_MS,
   TASK_IDLE,
   TASK_TRAIN_COMBAT,
@@ -18,8 +16,10 @@ import {
   VIGILANTE_MAX_FRACTION,
   WANTED_LEVEL_FLOOR,
   WANTED_PENALTY_FLOOR,
+  memberPower,
   moneyScore,
   ourPowerRate,
+  powerToHold,
   respectScore,
   territoryRate,
   updatesToChance,
@@ -68,8 +68,22 @@ import { PORT_GANG, PORT_GANG_BUILD, VERSION } from './lib/ports';
  * war. Untestable from a mature save; found by reading resetGangs, not by running.
  * v9: status shows the conquest eta while clashing instead of a meaningless `eta 0` (the build eta
  * measures time to the ENGAGE floor, which is behind us by then). Rate math verified live: predicted
- * +0.406pp over ~28 updates, observed +0.428pp. */
-const REV = 'v9';
+ * +0.406pp over ~28 updates, observed +0.428pp.
+ * v10: three linked fixes, all from watching the release actually fire. Standing the roster down at
+ * a 90% win chance cost ~96% of our power rate (10.284 -> 0.411/update) and would have tripled the
+ * conquest, to buy pre-conquest income worth ~1/260th of the prize — so staffing now holds until the
+ * rival's territory is gone. Ascension resumed at that release and gutted the roster (respect
+ * 1.999m -> 353k, gear destroyed), so its pause now spans the whole war, not just the build. And
+ * equip.js stops buying augs mid-conquest: their price tracks 1/respect, and respect is about to go
+ * up ~100x.
+ * v11: v10's "stay all-in until the rival's territory is gone" quoted a stale multiplier as if it
+ * were constant. Finishing an hour sooner was worth ~262x income at 17.5% territory but only ~67x at
+ * 33% and ~7x by 67% — the argument for the roster decays as we conquer and crosses over before the
+ * war ends. Warfare is now a GARRISON sized by powerToHold (~rivalPower * 0.0159, independent of our
+ * own power, and shrinking as territory rises), so members return to earning as the war winds down.
+ * Also: personal augmentations are NOT discounted, so pre-conquest income does have a sink — the
+ * claim that it had none was wrong. */
+const REV = 'v11';
 
 const HELPER_ASCEND = '/gang/ascend.js';
 const HELPERS = [HELPER_ASCEND, '/gang/equip.js', '/gang/territory.js'];
@@ -244,10 +258,29 @@ function assign(
   // staffing a weak member is the income they forgo, which for a weak member is negligible too.
   let slots = 0;
   let building = false;
+  let garrison = 0;
   if (members.length >= MAX_MEMBERS) {
     if (warfare.engaged) {
-      slots = warfare.minChance < POWER_RELEASE_FLOOR ? POWER_MEMBERS : POWER_MAINTAIN;
-      building = slots === POWER_MEMBERS;
+      // Two different jobs, and only the first needs the whole roster.
+      //
+      // BUILDING (power still buying something): more power raises `powerBonus`, which is how much
+      // territory each win TAKES. But it is logarithmic — 4.5x the power is +17% territory per clash
+      // — so it only pays while the remaining prize is large. And that prize shrinks as we conquer:
+      // finishing an hour sooner was worth ~262x income at 17.5% territory, ~67x at 33%, and ~7x by
+      // 67%. Past the crossover, staffing the roster costs more than it buys.
+      //
+      // GARRISON (power only preventing loss): the decay is ~`rivalPower * 0.0159` regardless of our
+      // own power, so holding a crushed rival down is a couple of weak members, not twelve. That
+      // requirement also falls as territory rises, so the garrison shrinks on its own.
+      //
+      // At rivalTerritory 0 the war ends itself — `gangs` only lists factions holding territory and
+      // the clash block is gated on `gangs.length > 1`, so there is nobody left to fight and no way
+      // to lose it back. Everyone earns.
+      if (warfare.rivalTerritory > 0) {
+        building = true;
+        garrison = powerToHold(info.power, warfare.rivalPower, info.territory);
+        slots = MAX_MEMBERS;
+      }
     } else {
       // Staff warfare only if this roster can actually finish the race. A rival gains ~1.2 power per
       // update no matter what we do, so a roster whose rate can't clear that is strictly worse off
@@ -272,7 +305,17 @@ function assign(
       slots = building ? POWER_MEMBERS : 0;
     }
   }
-  const warriors = earners.slice(Math.max(0, earners.length - slots));
+
+  // Weakest earners first: they cost the least income, and since a strong member's power and its
+  // earnings scale together, filling a power quota from the bottom is cheaper than from the top.
+  // `garrison > 0` caps the draft at whatever holds our power steady; otherwise `slots` takes all.
+  const warriors: typeof ranked = [];
+  let staffed = 0;
+  for (let i = earners.length - 1; i >= 0 && warriors.length < slots; i--) {
+    if (garrison > 0 && staffed >= garrison) break;
+    warriors.push(earners[i]);
+    staffed += memberPower(earners[i].member);
+  }
   for (const entry of warriors) plan.set(entry.member.name, TASK_WARFARE);
 
   // wantedPenalty = respect/(respect+wanted) scales BOTH respect and money, so letting it sag is a

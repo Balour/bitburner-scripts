@@ -1,5 +1,6 @@
 import type { NS } from '@ns';
 import { GANG_CASH_RESERVE, GEAR_BUDGET_FRACTION } from '../lib/gang';
+import { PORT_GANG_BUILD } from '../lib/ports';
 
 /**
  * ~16.7 GB. Short-lived — exec'd round-robin by the gang controller, then exits.
@@ -46,9 +47,26 @@ export async function main(ns: NS) {
 
   const members = ns.gang.getMemberNames().map((name) => ns.gang.getMemberInformation(name));
 
+  /**
+   * While a conquest is running, buy NO augmentations — wait, and buy the same ones for a fraction.
+   *
+   * `getEquipmentCost` divides by `Gang.getDiscount()`, and that is:
+   *   respect^0.01 + respect/5e6 + power^0.01 + power/1e6 - 1
+   * The `respect / 5e6` term is LINEAR and dominates everything else at scale, so aug prices track
+   * respect almost inversely — and territory multiplies respect by ~100x. Every aug on the board is
+   * about to fall by roughly that factor: Graphene Bone Lacings at $38.391b becomes well under a
+   * billion. Nothing bought mid-conquest is worth 50x its own price a few hours later, and augs do
+   * not speed the conquest anyway (power is no longer the bottleneck once we're winning clashes).
+   *
+   * Gear is exempt: it is cheap, it feeds power (which DOES speed the conquest), and ascension —
+   * the only thing that destroys it — is paused for the same window.
+   */
+  const conquering = ns.peek(PORT_GANG_BUILD) === '1';
+
   // Durable augs before disposable gear; cheapest first within each so the whole roster gets the
   // basics before anyone gets a luxury.
-  const ordered = [...catalogue.filter((i) => i.isAug), ...catalogue.filter((i) => !i.isAug)];
+  const augs = conquering ? [] : catalogue.filter((i) => i.isAug);
+  const ordered = [...augs, ...catalogue.filter((i) => !i.isAug)];
 
   let bought = 0;
   let spent = 0;
