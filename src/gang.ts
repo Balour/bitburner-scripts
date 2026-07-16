@@ -1,11 +1,15 @@
 import type { NS } from '@ns';
 import type { GangInfo, MemberInfo, TaskStats } from './lib/gang';
 import {
+  CLASH_ENGAGE_FLOOR,
   GANG_CASH_RESERVE,
   EARN_UNLOCK_RESPECT,
   MAX_MEMBERS,
+  POWER_BUILD_MAX_MS,
   POWER_MAINTAIN,
   POWER_MEMBERS,
+  POWER_RELEASE_FLOOR,
+  POWER_UPDATE_MS,
   TASK_IDLE,
   TASK_TRAIN_COMBAT,
   TASK_TRAIN_HACKING,
@@ -15,10 +19,12 @@ import {
   WANTED_LEVEL_FLOOR,
   WANTED_PENALTY_FLOOR,
   moneyScore,
+  ourPowerRate,
   respectScore,
+  updatesToChance,
   wantedGain,
 } from './lib/gang';
-import { PORT_GANG, VERSION } from './lib/ports';
+import { PORT_GANG, PORT_GANG_BUILD, VERSION } from './lib/ports';
 
 /**
  * ~13.1 GB. The gang controller: recruit, assign tasks, hold the wanted level down.
@@ -44,27 +50,58 @@ import { PORT_GANG, VERSION } from './lib/ports';
  * rather than a stingy 10% slice, so idle cash actually flows into the gang.
  * v5: members now TRAIN until they can do a high-tier task instead of settling on Mug. Exp scales
  * with difficulty^0.9, so mugging builds stats ~63x slower than Train Combat — the ranker's
- * respect-priority was keeping members weak and stalling the whole gang below the stat wall. */
-const REV = 'v5';
+ * respect-priority was keeping members weak and stalling the whole gang below the stat wall.
+ * v6: territory. POWER_MEMBERS was 4, which MEASURABLY LOST the power race (gap to Speakers widened
+ * 4,100 -> 4,132 in ~27 min) — it staffed the weakest earners and produced 0.84/update against a
+ * rival's passive 1.23. Now the full roster builds, gated on a computed time-to-engage so a weak
+ * roster earns instead of forfeiting income to a race it cannot finish; the roster keeps pushing
+ * through the clash phase until dominant (standing down at the engage floor collapses power); and
+ * ascension pauses during a build, since it zeroes the very stats power is summed from.
+ * v7: v6 crashed on start. Ports persist across restarts, so PORT_GANG still held v5's payload,
+ * whose missing rivalPower/rivalRate reached ns.format.number as undefined. readWarfare now
+ * validates every field, and staffing requires rivalPower > 0 so a bad payload can't trigger a
+ * blackout.
+ * v8: publishes `building` on PORT_GANG_BUILD. resetGangs() starts every gang at power 1, so a fresh
+ * BitNode reads a 0.5 clash chance against all six rivals from tick one — enough to clear the engage
+ * floor with a 3-member roster and nobody on warfare. territory.js now needs this flag to start a
+ * war. Untestable from a mature save; found by reading resetGangs, not by running. */
+const REV = 'v8';
 
-const HELPERS = ['/gang/ascend.js', '/gang/equip.js', '/gang/territory.js'];
+const HELPER_ASCEND = '/gang/ascend.js';
+const HELPERS = [HELPER_ASCEND, '/gang/equip.js', '/gang/territory.js'];
 /** Ticks between helper launches. One at a time, so peak RAM stays bounded. */
 const HELPER_EVERY = 5;
 const TICK_MS = 2000; // the gang itself only processes every 2s
 const BONUS_TICK_MS = 200; // burn down bonus time faster when the game hands us some
 
 interface Warfare {
-  wantPower: boolean;
   engaged: boolean;
   minChance: number;
+  rivalPower: number;
+  rivalRate: number;
 }
 
+/**
+ * Ports are global and PERSIST across script restarts, so this may hold the payload written by the
+ * PREVIOUS version of territory.js — which is exactly what happens on every schema change, for the
+ * ~30s until the helper's next round-robin turn rewrites it. v5's `{wantPower, engaged, minChance}`
+ * has no rivalPower/rivalRate, and reading them straight off the parse fed `undefined` into
+ * ns.format.number, which throws. So validate every field instead of trusting the shape: a port is a
+ * cross-version interface, not a private channel.
+ */
 function readWarfare(ns: NS): Warfare {
   const raw = ns.peek(PORT_GANG);
-  if (typeof raw !== 'string' || raw.startsWith('NULL')) {
-    return { wantPower: false, engaged: false, minChance: 0 };
-  }
-  return JSON.parse(raw) as Warfare;
+  const fallback: Warfare = { engaged: false, minChance: 0, rivalPower: 0, rivalRate: 0 };
+  if (typeof raw !== 'string' || raw.startsWith('NULL')) return fallback;
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  const num = (value: unknown, dflt: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? value : dflt;
+  return {
+    engaged: parsed.engaged === true,
+    minChance: num(parsed.minChance, 0),
+    rivalPower: num(parsed.rivalPower, 0),
+    rivalRate: num(parsed.rivalRate, 0),
+  };
 }
 
 /** Fill empty slots. The first 3 members are free; after that each costs exponentially more
@@ -109,7 +146,11 @@ export async function main(ns: NS) {
     const info = ns.gang.getGangInformation();
     const members = ns.gang.getMemberNames().map((name) => ns.gang.getMemberInformation(name));
     const warfare = readWarfare(ns);
-    const plan = assign(ns, info, members, tasks, byName, warfare, useFormulas);
+    const { plan, building } = assign(ns, info, members, tasks, byName, warfare, useFormulas);
+
+    // Tell territory.js whether we're actually backing a war before it starts one. Port I/O is 0 GB.
+    ns.clearPort(PORT_GANG_BUILD);
+    ns.writePort(PORT_GANG_BUILD, building ? '1' : '0');
 
     for (const member of members) {
       const task = plan.get(member.name);
@@ -118,10 +159,15 @@ export async function main(ns: NS) {
 
     if (tick % HELPER_EVERY === 0) {
       const helper = HELPERS[Math.floor(tick / HELPER_EVERY) % HELPERS.length];
-      ns.exec(helper, 'home');
+      // Ascension resets a member's stats to base — it keeps the multiplier and the exp curve does
+      // the rest. Normally that's a good trade and ascend.js should take it. During a power build it
+      // is not: power is the CURRENT stat sum, so ascending a 340-power member drops them to ~20 for
+      // hours, and the whole point of the blackout is to cash the roster's present stats into power
+      // before the rival's passive ~1.2/update outruns us. Pause it; resume once we're dominant.
+      if (!building || helper !== HELPER_ASCEND) ns.exec(helper, 'home');
     }
 
-    status(ns, info, members, plan, warfare);
+    status(ns, info, members, plan, warfare, building);
 
     const bonus = ns.gang.getBonusTime();
     await ns.sleep(bonus > TICK_MS ? BONUS_TICK_MS : TICK_MS);
@@ -144,7 +190,7 @@ function assign(
   byName: (name: string) => TaskStats | undefined,
   warfare: Warfare,
   useFormulas: boolean,
-): Map<string, string> {
+): { plan: Map<string, string>; building: boolean } {
   // Respect gates recruiting and converts to the faction rep we need for The Red Pill. Money
   // only becomes the objective once the roster is full.
   const wantRespect = members.length < MAX_MEMBERS;
@@ -186,9 +232,39 @@ function assign(
 
   // Power only accrues from members actually sitting on Territory Warfare. Don't stall recruiting
   // for it, and never send trainees — power is stats/95, so they contribute nothing anyway.
+  //
+  // Note power is a SUM over the members on the task, never an average, so a weak member can only
+  // ADD to the rate — there is no such thing as one "dragging down" the total. The only cost of
+  // staffing a weak member is the income they forgo, which for a weak member is negligible too.
   let slots = 0;
+  let building = false;
   if (members.length >= MAX_MEMBERS) {
-    slots = warfare.engaged ? POWER_MAINTAIN : warfare.wantPower ? POWER_MEMBERS : 0;
+    if (warfare.engaged) {
+      slots = warfare.minChance < POWER_RELEASE_FLOOR ? POWER_MEMBERS : POWER_MAINTAIN;
+      building = slots === POWER_MEMBERS;
+    } else {
+      // Staff warfare only if this roster can actually finish the race. A rival gains ~1.2 power per
+      // update no matter what we do, so a roster whose rate can't clear that is strictly worse off
+      // trying: it forfeits all income and still never engages. Measured, at POWER_MEMBERS = 4, the
+      // gap to Speakers WIDENED. This gate is what makes the whole thing self-enabling — earn, buy
+      // augs, stats rise, our rate rises, and warfare switches itself on when it can be won.
+      const updates = updatesToChance(
+        info.power,
+        ourPowerRate(
+          info,
+          earners.map((entry) => entry.member),
+        ),
+        warfare.rivalPower,
+        warfare.rivalRate,
+        CLASH_ENGAGE_FLOOR,
+      );
+      // `rivalPower > 0` is load-bearing, not a null-check: it means "there is someone left to
+      // fight". Without it a zero (a stale/absent port payload, or every rival already crushed) makes
+      // updatesToChance return 0 — an instant "eta 0, go" that parks the whole roster on warfare for
+      // nothing. Fail safe: no rival data, no blackout.
+      building = warfare.rivalPower > 0 && updates * POWER_UPDATE_MS <= POWER_BUILD_MAX_MS;
+      slots = building ? POWER_MEMBERS : 0;
+    }
   }
   const warriors = earners.slice(Math.max(0, earners.length - slots));
   for (const entry of warriors) plan.set(entry.member.name, TASK_WARFARE);
@@ -222,10 +298,17 @@ function assign(
     }
   }
 
-  return plan;
+  return { plan, building };
 }
 
-function status(ns: NS, info: GangInfo, members: MemberInfo[], plan: Map<string, string>, warfare: Warfare): void {
+function status(
+  ns: NS,
+  info: GangInfo,
+  members: MemberInfo[],
+  plan: Map<string, string>,
+  warfare: Warfare,
+  building: boolean,
+): void {
   const count = (task: string): number => [...plan.values()].filter((name) => name === task).length;
   // upgrades / augmentations aren't NS API names, so reading them is free; cash costs 0.1 GB.
   const gear = members.reduce((sum, member) => sum + member.upgrades.length, 0);
@@ -253,6 +336,19 @@ function status(ns: NS, info: GangInfo, members: MemberInfo[], plan: Map<string,
   ns.print(
     `  territory ${ns.format.percent(info.territory)}  power ${ns.format.number(info.power)}  ` +
       `${info.territoryWarfareEngaged ? 'CLASHING' : 'peace'} (min win ${ns.format.percent(warfare.minChance)})`,
+  );
+  // The race, made visible: our rate must beat the rival's or warfare is a pure loss. `eta` is time
+  // to CLASH_ENGAGE_FLOOR at the current rates — if it reads Infinity the roster is too weak and the
+  // gate correctly has everyone earning instead.
+  const rate = ourPowerRate(
+    info,
+    members.filter((member) => plan.get(member.name) === TASK_WARFARE),
+  );
+  const eta = updatesToChance(info.power, rate, warfare.rivalPower, warfare.rivalRate, CLASH_ENGAGE_FLOOR);
+  ns.print(
+    `  power/upd ${ns.format.number(rate)} vs rival ${ns.format.number(warfare.rivalRate)}` +
+      ` (${ns.format.number(warfare.rivalPower)} pow)` +
+      `${building ? `  BUILDING, eta ${Number.isFinite(eta) ? ns.format.time(eta * POWER_UPDATE_MS) : 'never'}` : ''}`,
   );
   const training = count(TASK_TRAIN_COMBAT) + count(TASK_TRAIN_HACKING);
   const parked = training + count(TASK_WARFARE) + count(TASK_VIGILANTE);

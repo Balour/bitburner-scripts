@@ -8,7 +8,7 @@
  * unrelated file changes. Each script carries its own `REV` for that, printed as
  * `daemon v3 [build v17]`. Bump a script's REV when THAT script's behaviour changes; bump VERSION
  * on any change at all. */
-export const VERSION = 'v27';
+export const VERSION = 'v31';
 
 /** RAM to keep free on `home` for the controllers' TRANSIENT execs. Workers/share size themselves
  * as `maxRam - used - HOME_RESERVE`, and `used` already covers the resident controllers — so this
@@ -29,6 +29,18 @@ export const PORT_RAMNEED = 2;
  * so the gang controller knows whether to staff members onto Territory Warfare. The controller
  * cannot compute it itself: getChanceToWinClash is 4 GB and getAllGangInformation another 2. */
 export const PORT_GANG = 3;
+
+/** The reverse channel: the gang controller publishes '1' here while it is BUILDING power (the whole
+ * roster on Territory Warfare), '0' otherwise, so gang/territory.js knows whether we are actually
+ * investing in the war before it starts one.
+ *
+ * It cannot infer this. `resetGangs()` starts EVERY gang — ours and all six rivals — at power 1 and
+ * territory 1/7, so `getClashWinChance` reads exactly 0.5 against everyone at hour zero of a fresh
+ * BitNode. That clears CLASH_ENGAGE_FLOOR on the first helper run, while the roster is still 3
+ * members, nobody is on warfare, and our power consequently cannot grow at all — we would clash
+ * until the disengage floor caught us. Engaging is only ever right when someone is building the
+ * power to back it. */
+export const PORT_GANG_BUILD = 4;
 
 /** Written on `home` for humans and for monitor.js. `ns.read`/`ns.write` are 0 GB. */
 export const TARGETS_FILE = '/data/targets.json';

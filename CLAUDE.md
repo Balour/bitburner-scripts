@@ -233,6 +233,19 @@ alone can't detect a stale sync — it doesn't move when someone else's file cha
 transient rank/root execs — home is a measured worker host, not hard-excluded), `HACK_FRACTION`,
 `GROW_MULT`, port/file paths.
 
+> **A port is a cross-version interface. Never trust the shape of what you read off one.** Ports are
+> global and **persist across script restarts** — killing and relaunching both sides does not clear
+> them. So after any change to a payload's schema, the reader starts up and parses the *previous
+> version's* payload, written by a helper that is no longer running, until that helper's next turn
+> rewrites it. Fields you just added read back `undefined`, and `ns.format.number(undefined)` throws
+> a TypeError that kills the controller. Bit us on gang v6: `PORT_GANG` still held v5's
+> `{wantPower, engaged, minChance}` after the restart.
+>
+> Validate every field against a typed fallback rather than casting the parse (`JSON.parse(raw) as T`
+> is a lie the compiler cannot catch). And make the defaults **fail safe, not fail open** — the same
+> fix surfaced a second bug where a defaulted `rivalPower: 0` made a "time to win" calculation return
+> 0, reading as *go now* instead of *no data*.
+
 **Reset ritual:** `run /bootstrap.js`, let the daemon earn, upgrade home RAM, re-run bootstrap as it
 grows. Purchased servers do NOT survive an augment install (home RAM does); auto-buy rebuys after.
 

@@ -55,10 +55,22 @@ export const TASK_TRAIN_HACKING = 'Train Hacking';
 
 /** Ascend when the best stat multiplier would grow by at least this factor. */
 export const ASCEND_THRESHOLD = 1.15;
-/** Turn clashes ON only when our win chance against EVERY live rival clears this... */
-export const CLASH_ENGAGE_FLOOR = 0.6;
+/**
+ * Turn clashes ON only when our win chance against EVERY live rival clears this...
+ *
+ * 0.5, not something safer, because clashing is the ONLY way to reduce a rival's power and the
+ * asymmetry is ours: the loser's power is multiplied by 1/1.01, but the PLAYER's only by 1/1.008.
+ * So at an even 50/50 our power ratio still improves ~0.14%/update while territory random-walks
+ * with zero drift — over the ~350 updates it takes to reach 0.6, the expected territory change is 0
+ * and the spread is sqrt(350) * 0.0001 ~ 0.19%, against a 14% holding. Negligible.
+ *
+ * Waiting for a higher floor is not "safe", it is expensive: our power rate is a fixed ~3.3/update
+ * while a rival's is ~1.2, so each 0.05 of extra floor costs hours of blacked-out income, and floors
+ * above ~0.6 are unreachable in peace at all (we cannot out-grow 9x their power without fighting).
+ */
+export const CLASH_ENGAGE_FLOOR = 0.5;
 /** ...and back OFF below this. The gap is hysteresis, so we don't flap on the boundary. */
-export const CLASH_DISENGAGE_FLOOR = 0.55;
+export const CLASH_DISENGAGE_FLOOR = 0.45;
 /** wantedPenalty multiplies BOTH respect and money gain, so letting it sag is expensive. */
 export const WANTED_PENALTY_FLOOR = 0.95;
 /**
@@ -100,10 +112,123 @@ export const GANG_CASH_RESERVE = 5e7;
  *     absorb a large pile, and those wait until cash can reach them.
  */
 export const GEAR_BUDGET_FRACTION = 0.05;
-/** Members parked on Territory Warfare while building power toward CLASH_ENGAGE_FLOOR... */
-export const POWER_MEMBERS = 4;
-/** ...and kept there afterwards, since NPC gangs keep growing power passively. */
+/**
+ * Members parked on Territory Warfare while building power toward CLASH_ENGAGE_FLOOR.
+ *
+ * The WHOLE roster, and this is not a tuning preference — 4 was measured losing ground. Power is
+ * `0.015 * territory * sum(memberPower)` and accrues ONLY from members on this task, while an NPC
+ * gang gains ~1.2/update passively no matter what we do. With 4 members (and `warriors` slicing the
+ * WEAKEST earners) we made 0.84/update against Speakers' 1.23 — the gap widened 4,100.35 -> 4,132.26
+ * over ~27 minutes. Anything short of a decisive rate advantage is worse than not trying: it pays
+ * the income cost and never arrives.
+ *
+ * Staffing is gated on POWER_BUILD_MAX_MS, so a roster too weak to win in reasonable time earns
+ * instead of parking on a task it can never cash in.
+ */
+export const POWER_MEMBERS = MAX_MEMBERS;
+/** ...and kept there afterwards, since NPC gangs keep growing power passively. Only safe once we
+ * are DOMINANT — see POWER_RELEASE_FLOOR, which is what gates dropping to it. */
 export const POWER_MAINTAIN = 2;
+/**
+ * Win chance below which the FULL roster stays on warfare even while clashing.
+ *
+ * Standing down at the engage floor would collapse us. Our power decays `(1-w) * 0.008 * power` per
+ * update on a loss — ~20/update at 50/50 and power ~5,000 — and POWER_MAINTAIN's two members
+ * generate ~0.5/update. Power craters, the win chance slides back to the disengage floor, and the
+ * script flaps forever without ever crushing anyone. Solving the steady state
+ * `(1-w)*0.008*X = ourRate`, `w*0.01*Y = rivalRate`, `w = X/(X+Y)`: with the full roster it runs
+ * away to w -> 1 (their power collapses to ~123); with only two it converges DOWNWARD and we lose.
+ *
+ * Above this floor the rival is crushed (power ~130) and two members hold the lead for days, so the
+ * other ten go back to earning while territory grinds up.
+ */
+export const POWER_RELEASE_FLOOR = 0.9;
+/**
+ * Give up on the whole territory project if reaching CLASH_ENGAGE_FLOOR would take longer than
+ * this. Encodes the actual trade: a blackout is worth ~90x respect / ~170x money afterwards, but
+ * only if it ends. This is what makes staffing self-enabling — a weak roster earns and buys augs,
+ * augs raise stats, stats raise our power rate (updateSkillLevels folds equipment and ascension
+ * mults into the stat BEFORE calculatePower reads it), and warfare switches itself on.
+ *
+ * 12h, not 24h, and the reasoning is NOT "24h is too long to wait" — it is that WAITING IMPROVES THE
+ * ETA. Our rate scales with the roster while a rival's is capped at ~1.6/update, so an eta of 20h at
+ * hour 8 may be an eta of 5h at hour 15 — firing early would black out for 20h and finish LATER than
+ * waiting seven hours and blacking out for five. The gate should trigger when the eta is genuinely
+ * short, not merely finite.
+ *
+ * UNVERIFIED. This is the one number in the file with no measurement behind it — a mature roster is
+ * the only one we have ever observed, and it reports ~5h from any starting point. The shape of
+ * eta(t) on a FRESH roster is exactly what a BN2 rerun would measure, and it is the most valuable
+ * thing such a run would produce. Treat 12h as a guess with a rationale, not a result.
+ */
+export const POWER_BUILD_MAX_MS = 12 * 3600 * 1000;
+/** GangConstants.CyclesPerTerritoryAndPowerUpdate (100) x CONSTANTS.MilliPerCycle (200). Power and
+ * territory move on this clock, NOT the 2s gang clock. */
+export const POWER_UPDATE_MS = 20_000;
+/** Gang.calculatePower(): `0.015 * max(0.002, territory) * sum(memberPower)`. */
+const POWER_GAIN_COEFF = 0.015;
+/** src/Gang/data/power.ts. Drives an NPC gang's passive power growth; ours is not in play (the
+ * player's gang gains only from members on the task). Speakers/Black Hand at 5 are the fast ones. */
+export const POWER_MULTIPLIER: Record<string, number | undefined> = {
+  'Slum Snakes': 1,
+  Tetrads: 2,
+  'The Syndicate': 2,
+  'The Dark Army': 2,
+  'Speakers for the Dead': 5,
+  NiteSec: 2,
+  'The Black Hand': 5,
+};
+
+/** GangMember.calculatePower(). The stats already include equipment/augmentation and ascension
+ * multipliers — `updateSkillLevels()` applies them when deriving the stat from exp. */
+export function memberPower(member: MemberInfo): number {
+  return (member.hack + member.str + member.def + member.dex + member.agi + member.cha) / 95;
+}
+
+/** Our power gain per update if exactly `warriors` sit on Territory Warfare. */
+export function ourPowerRate(info: GangInfo, warriors: MemberInfo[]): number {
+  const total = warriors.reduce((sum, member) => sum + memberPower(member), 0);
+  return POWER_GAIN_COEFF * Math.max(0.002, info.territory) * total;
+}
+
+/**
+ * An NPC gang's EXPECTED power gain per update. The engine draws ONE roll and branches on it:
+ *
+ *   const gainRoll = Math.random();
+ *   if (gainRoll < 0.5) power += Math.min(0.85, power * 0.005);          // hard-capped
+ *   else                power += 0.75 * gainRoll * territory * powerMult;
+ *
+ * The subtlety is that `gainRoll` is reused as the additive coefficient, and that branch only runs
+ * when `gainRoll >= 0.5` — so it is uniform on [0.5, 1) and its mean is **0.75, not 0.5**. Using 0.5
+ * (as this did) understates the additive term by exactly 1.5x. The cap is why a large rival stops
+ * accelerating: Speakers at 5,177 power would gain 25.9 from the multiplicative branch and takes
+ * 0.85.
+ */
+export function npcPowerRate(faction: string, power: number, territory: number): number {
+  const capped = Math.min(0.85, power * 0.005);
+  const additive = 0.75 * 0.75 * territory * (POWER_MULTIPLIER[faction] ?? 2);
+  return (capped + additive) / 2;
+}
+
+/**
+ * Updates of warfare needed before `getChanceToWinClash` against this rival reaches `target`, given
+ * both sides' power and growth. Infinity when our rate never outruns theirs — the case that makes
+ * staffing warfare a pure loss. Win chance is exactly `ours / (ours + theirs)`, so the target is
+ * `ours = k * theirs` with `k = target / (1 - target)`.
+ */
+export function updatesToChance(
+  ourPower: number,
+  ourRate: number,
+  theirPower: number,
+  theirRate: number,
+  target: number,
+): number {
+  const k = target / (1 - target);
+  const deficit = k * theirPower - ourPower;
+  if (deficit <= 0) return 0;
+  const closing = ourRate - k * theirRate;
+  return closing > 0 ? deficit / closing : Infinity;
+}
 
 /** GangSoftcap by BitNode — the only BitNode-aware value in the whole gang system. It enters the
  * formulas ONLY as an exponent applied identically to every task, so it cannot reorder them and

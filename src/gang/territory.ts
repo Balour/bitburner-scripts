@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
-import { CLASH_DISENGAGE_FLOOR, CLASH_ENGAGE_FLOOR } from '../lib/gang';
-import { PORT_GANG } from '../lib/ports';
+import { CLASH_DISENGAGE_FLOOR, CLASH_ENGAGE_FLOOR, POWER_RELEASE_FLOOR, npcPowerRate } from '../lib/gang';
+import { PORT_GANG, PORT_GANG_BUILD } from '../lib/ports';
 
 /**
  * ~11.6 GB. Short-lived — exec'd round-robin by the gang controller, then exits. It owns the two
@@ -14,8 +14,10 @@ import { PORT_GANG } from '../lib/ports';
  *
  * The engage/disengage floors differ on purpose: hysteresis, so we don't flap at the boundary.
  *
- * Publishes `{ wantPower, engaged, minChance }` on PORT_GANG. The controller reads it to decide
- * how many members to park on Territory Warfare — power only accrues from members on that task.
+ * Publishes `{ engaged, minChance, rivalPower, rivalRate }` on PORT_GANG. It does NOT decide
+ * whether to staff warfare: that needs member stats (power is stats/95), which live in the
+ * controller. We publish the rival half of the race — power and its passive growth — and the
+ * controller compares it against its own roster.
  *
  * Run: `run /gang/territory.js`
  */
@@ -30,8 +32,22 @@ export async function main(ns: NS) {
   const chances = rivals.map((name) => ns.gang.getChanceToWinClash(name));
   const minChance = chances.length > 0 ? Math.min(...chances) : 1;
 
+  // The gang we're actually racing is the one we're worst against — beat it and the rest follow.
+  const worst = chances.length > 0 ? rivals[chances.indexOf(minChance)] : undefined;
+  const rivalPower = worst ? all[worst].power : 0;
+  const rivalRate = worst ? npcPowerRate(worst, all[worst].power, all[worst].territory) : 0;
+
+  // Never START a war we aren't investing in. A fresh BitNode hands every gang power 1 and territory
+  // 1/7, so minChance reads exactly 0.5 against everyone from the first tick — clearing the engage
+  // floor before we have a roster, let alone one on Territory Warfare. Require that the controller
+  // is building power (or that we already dominate, which is how we stay engaged after it stands the
+  // roster down at POWER_RELEASE_FLOOR). Disengaging stays governed by the chance floor alone, so a
+  // war we're losing always ends.
+  const building = ns.peek(PORT_GANG_BUILD) === '1';
+  const canStart = building || minChance >= POWER_RELEASE_FLOOR;
+
   const wasEngaged = info.territoryWarfareEngaged;
-  const engaged = wasEngaged ? minChance >= CLASH_DISENGAGE_FLOOR : minChance >= CLASH_ENGAGE_FLOOR;
+  const engaged = wasEngaged ? minChance >= CLASH_DISENGAGE_FLOOR : canStart && minChance >= CLASH_ENGAGE_FLOOR;
 
   if (engaged !== wasEngaged) {
     ns.gang.setTerritoryWarfare(engaged);
@@ -39,5 +55,5 @@ export async function main(ns: NS) {
   }
 
   ns.clearPort(PORT_GANG);
-  ns.writePort(PORT_GANG, JSON.stringify({ wantPower: !engaged, engaged, minChance }));
+  ns.writePort(PORT_GANG, JSON.stringify({ engaged, minChance, rivalPower, rivalRate }));
 }
