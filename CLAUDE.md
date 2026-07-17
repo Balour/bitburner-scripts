@@ -39,7 +39,14 @@ Other v3 changes:
 
 ## Where we actually are
 
-**BitNode 1, zero Source-Files.** This is the constraint that shapes everything.
+> **Don't trust this section — run `/probe/state.js` and let the game answer.** It prints the
+> BitNode, owned Source-Files, home RAM, gang status and which programs exist. This section claimed
+> "BitNode 1, zero Source-Files, 8 GB home" long after that stopped being true and sent planning off
+> a cliff. The probe is the authority; everything below is a snapshot with a date on it.
+
+**BitNode 2, run #2. SF-1.1 and SF-2.1, nothing else.** This is the constraint that shapes
+everything. Probe output, 2026-07-17: BN2 · home 128 GB · in a gang · Formulas.exe **not** owned ·
+SF-1.1, SF-2.1 · 0 augs installed.
 
 From `Prestige.ts` — starting home RAM on entering a BitNode:
 
@@ -49,20 +56,34 @@ else if (activeSourceFileLvl(1) > 0) setMaxRam(32);
 else setMaxRam(8);
 ```
 
-- **Run #1 (now): 8 GB home.** Not 32.
-- **Runs #2–3: 32 GB home**, once SF-1 exists at any level.
-- **128 GB requires SF-9 level ≥ 2** (Hacknet Servers, BitNode 9) — *not* from repeating BN1.
-- Plan is to clear BN1 three times → **SF-1.3 = +28% to all multipliers**.
+- **SF-1.1 means a new BitNode starts at 32 GB home**, not 8. The 8 GB era is behind us.
+- **128 GB on entry needs SF-9 level ≥ 2** (Hacknet Servers, BN9), which we do not have. The current
+  128 GB is *purchased upgrades* and drops back to 32 on entering the next BitNode.
 - `prestigeAugmentation` does **not** reset home RAM. RAM upgrades survive augment installs and reset
   only on entering a new BitNode.
 
-**No SF-4 means no `ns.singularity`.** So in run #1 there is *no* automating: buying port programs,
-the TOR router / darkweb (`purchaseTor`, `purchaseProgram`, `getDarkwebPrograms` are all Singularity),
-backdoors, faction joining, or augment installs. Those are manual. Legacy `program-buyer.ts` and
-`backdoor-all.ts` are dead code for us.
+**SF-2.1 means a gang in any BitNode** — and BN2 additionally bypasses the -54,000 karma gate
+(`bitNodeN === 2`), which no other node does. That karma grind is a Singularity script to write in
+BN4, not here.
 
-**Formulas.exe costs $5,000,000,000** (or hacking level 1000 to write). Not happening early. Until
-then, thread math must be done without `ns.formulas.*`.
+**The plan: finish this BN2 run, then BN4.** The gang stack has never run from cold, and BN4 gives
+exactly one shot at it on the game's hardest node — BN2 is the cheap testbed for the same code path.
+The older "clear BN1 three times → SF-1.3" plan is **superseded**: BN1 was cleared once and we moved
+on.
+
+**No SF-4 means no `ns.singularity`** — still true, and still the biggest constraint. No automating:
+buying port programs, the TOR router / darkweb (`purchaseTor`, `purchaseProgram`,
+`getDarkwebPrograms` are all Singularity), backdoors, faction joining, or augment installs. Those are
+manual. Legacy `program-buyer.ts` and `backdoor-all.ts` are dead code for us. **SF-4 is the point of
+going to BN4.**
+
+**No SF-5, and Formulas.exe not owned** ($5,000,000,000, or hacking level 1000 to write). Thread math
+stays manual — that is what `rank.ts`'s min-security projection is for. `rank-formulas.ts` is ready
+for the day this changes.
+
+**Programs do not survive entering a BitNode** — only NUKE.exe carries over, so every run re-buys the
+port openers and SQLInject. Anywhere in this doc that calls a program "owned" is describing a *past*
+run until `/probe/state.js` says otherwise.
 
 ## RAM is the whole game
 
@@ -260,11 +281,17 @@ mutates: servers move, restart (killing your scripts), and go offline. Servers a
 **guessing passwords**, not by NUKE + port openers. It is **not** the classic TOR darkweb — that is
 still `ns.singularity.purchaseProgram`, and the old `darkweb` server becomes the darknet's entry node
 (**16 GB**). Access is gated behind `DarkscapeNavigator.exe` — **$50M** darkweb / **$30M** Chongqing +
-a TOR router, purely a money gate (no SF, no BitNode lock, no hacking level). Now owned. BN1's darknet
+a TOR router, purely a money gate (no SF, no BitNode lock, no hacking level). BN1's darknet
 money multiplier is **1.0** (full); BN9 is 0.05, BN8 disables it.
 
+> **This whole section was written during BN1 / run #1 and its premises have expired.** Programs do
+> not survive entering a BitNode, so `DarkscapeNavigator.exe` ("now owned", below) is gone unless
+> re-bought, and `/probe/state.js` confirms **Formulas.exe is not owned** in BN2 run #2. BN2's
+> darknet money multiplier is also unverified — the 1.0 figure above is BN1's. The *verdict* below
+> probably still holds, but re-derive its premises before acting on it.
+
 **Verdict: don't build for it.** We verified against primary source what the darknet gives that money
-*can't* buy, and for *this* run — money-rich, `Formulas.exe` owned, `SQLInject.exe` trivial, plenty of
+*can't* buy, and for *run #1* — money-rich, `Formulas.exe` owned, `SQLInject.exe` trivial, plenty of
 RAM, charisma ~80 — the answer is: almost nothing useful. The earlier "caches → cheap port programs /
 Formulas.exe" thesis is **dead**; those caches only mattered while programs were expensive. Direct
 darknet money, cache money, and the abundant darknet RAM are all redundant now. `promoteStock` is dead
