@@ -38,6 +38,24 @@ export const FOUNDER_PREFERENCE = [
 ] as const;
 
 export const MAX_MEMBERS = 12;
+/**
+ * Take a trickle task — even Mug — while the next recruit costs less than this much respect.
+ *
+ * `respectForNextRecruit()` is `5^(members - 2)`, so the roster costs 5, 25, 125, 625, 3125, ... and
+ * the first three are nearly free: at ~30 stats (about 2.5 min of Train Combat) three members make
+ * ~0.04 respect/sec on Mug, which buys member 4 in ~2 min and member 6 inside half an hour. Every
+ * member bought early then trains in PARALLEL, so the whole roster's ramp shifts left — this is
+ * worth far more than the few minutes of training it costs.
+ *
+ * 200 stops it after member 6, deliberately. Past there the arithmetic inverts: member 7 (625) is
+ * ~2h of mugging and member 8 (3,125) ~10h, while mugging builds stats 63x slower than training
+ * (exp scales with difficulty^0.9 — Mug is difficulty 1, Train Combat is 100). Train instead, and
+ * let Terrorism buy the rest: once it unlocks it pays ~69 respect/sec, clearing member 8 in a minute.
+ *
+ * Note a level-1 member cannot Mug at all — statWeight is `1 - 4*1 = -3`, so every task scores 0 and
+ * they train regardless. This only ever engages once they can actually earn something.
+ */
+export const RECRUIT_RUSH_CEILING = 200;
 /** baseRespect that marks a "real" earning task worth doing over training. Above it: Terrorism
  * (0.01), Cyberterrorism (0.01), Human Trafficking (0.004), Money Laundering (0.001). Below it: the
  * low-tier trickle (Mug 0.00005, Strongarm, Armed Robbery, ...) that a member should train past

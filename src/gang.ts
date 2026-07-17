@@ -5,6 +5,7 @@ import {
   GANG_CASH_RESERVE,
   EARN_UNLOCK_RESPECT,
   MAX_MEMBERS,
+  RECRUIT_RUSH_CEILING,
   POWER_BUILD_MAX_MS,
   POWER_MEMBERS,
   POWER_UPDATE_MS,
@@ -82,8 +83,12 @@ import { PORT_GANG, PORT_GANG_BUILD, VERSION } from './lib/ports';
  * war ends. Warfare is now a GARRISON sized by powerToHold (~rivalPower * 0.0159, independent of our
  * own power, and shrinking as territory rises), so members return to earning as the war winds down.
  * Also: personal augmentations are NOT discounted, so pre-conquest income does have a sink — the
- * claim that it had none was wrong. */
-const REV = 'v11';
+ * claim that it had none was wrong.
+ * v12: rush the cheap recruits. EARN_UNLOCK_RESPECT was tuned against a full roster and starved the
+ * RECRUITING phase — three members trained toward Terrorism while members 4-6, priced at 5/25/125
+ * respect, sat unbought for want of a few minutes of Mug. Found on the first fresh-gang run, exactly
+ * the path a mature save cannot reach. */
+const REV = 'v12';
 
 const HELPER_ASCEND = '/gang/ascend.js';
 const HELPERS = [HELPER_ASCEND, '/gang/equip.js', '/gang/territory.js'];
@@ -241,10 +246,17 @@ function assign(
   // Terrorism, baseRespect 0.01, ~200x Mug's — goes net-positive, at which point the ranker picks it
   // and respect (hence rep) jumps orders of magnitude. The threshold cleanly separates the top tier
   // (Terrorism/Human Trafficking/Cyberterrorism/Money Laundering) from the low-tier trickle tasks.
+  // ...with ONE exception, and it is the whole early game. The first recruits are priced at
+  // `5^(members - 2)` — 5, 25, then 125 — which a trickle task clears in minutes, and every member
+  // bought now trains in parallel with the rest. So while the next recruit is that cheap, take the
+  // trickle: the roster it buys is worth vastly more than the training it costs. Bracket access on
+  // `respectForNextRecruit` for the RAM collision documented in recruit() above.
+  const rushRecruit = members.length < MAX_MEMBERS && info['respectForNextRecruit'] <= RECRUIT_RUSH_CEILING;
+
   const earners: typeof ranked = [];
   const trainees: typeof ranked = [];
   for (const entry of ranked) {
-    const ready = entry.task && entry.value > 0 && entry.task.baseRespect >= EARN_UNLOCK_RESPECT;
+    const ready = entry.task && entry.value > 0 && (rushRecruit || entry.task.baseRespect >= EARN_UNLOCK_RESPECT);
     (ready ? earners : trainees).push(entry);
   }
   for (const entry of trainees) plan.set(entry.member.name, training);
