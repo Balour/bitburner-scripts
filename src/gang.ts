@@ -87,8 +87,12 @@ import { PORT_GANG, PORT_GANG_BUILD, VERSION } from './lib/ports';
  * v12: rush the cheap recruits. EARN_UNLOCK_RESPECT was tuned against a full roster and starved the
  * RECRUITING phase — three members trained toward Terrorism while members 4-6, priced at 5/25/125
  * respect, sat unbought for want of a few minutes of Mug. Found on the first fresh-gang run, exactly
- * the path a mature save cannot reach. */
-const REV = 'v12';
+ * the path a mature save cannot reach.
+ * v13: the conquest eta counted only the WORST rival's territory — the whole map back when Speakers
+ * held everything, but half the truth on a fresh seven-way-split node. It is now everything we don't
+ * hold. The rate stays conservative: it assumes both clashes land on the strongest rival, when the
+ * engine actually picks opponents at random and the weaker ones pay out more. */
+const REV = 'v13';
 
 const HELPER_ASCEND = '/gang/ascend.js';
 const HELPERS = [HELPER_ASCEND, '/gang/equip.js', '/gang/territory.js'];

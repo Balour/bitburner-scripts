@@ -36,8 +36,14 @@ export async function main(ns: NS) {
   const worst = chances.length > 0 ? rivals[chances.indexOf(minChance)] : undefined;
   const rivalPower = worst ? all[worst].power : 0;
   const rivalRate = worst ? npcPowerRate(worst, all[worst].power, all[worst].territory) : 0;
-  // What's left to take from them — the numerator of the conquest eta.
-  const rivalTerritory = worst ? all[worst].territory : 0;
+  // Everything we do not hold — the numerator of the conquest eta, and the "is the war over?" test.
+  //
+  // NOT the worst rival's share. That was written when Speakers held everything and one rival WAS
+  // the map; on a fresh node the ground is split seven ways, so it understated what's left by half
+  // (15.74% ours / 44.44% theirs — while ~39.8% sat with five other gangs the eta ignored). The
+  // engine normalises territory to sum to 1 after every clash, so this is exact either way, and it
+  // collapses back to the rival's share once only one of them is left standing.
+  const rivalTerritory = 1 - info.territory;
 
   // Never START a war we aren't investing in. A fresh BitNode hands every gang power 1 and territory
   // 1/7, so minChance reads exactly 0.5 against everyone from the first tick — clearing the engage

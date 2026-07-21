@@ -111,10 +111,16 @@ export const VIGILANTE_MAX_FRACTION = 0.5;
  * with hacking-money nerfed this node, aren't worth buying until the gang is a fat money engine.
  * So while we're still building that engine, this is deliberately LOW: pour cash into the gang.
  *
+ * $1m, not the $50m it was. $50m was picked against a mature save and is larger than a FRESH gang's
+ * entire bank — it made equip.js a no-op for the one phase where cheap gear matters most, because
+ * gear multiplies stats and stats are what a new roster has none of. It self-limits without a big
+ * reserve: augs are funded first but cost billions, so at low cash they all fail this check and only
+ * gear gets bought — a few tens of millions, once, and then the gang goes quiet on its own.
+ *
  * Raise it (to a few billion) when you pivot to the hacking grind, or the gang will spend the cash
  * your personal-augment batches need. This is the one knob for the gang-vs-personal split.
  */
-export const GANG_CASH_RESERVE = 5e7;
+export const GANG_CASH_RESERVE = 1e6;
 
 /**
  * Two tiers, because `ascend()` treats them differently — `this.upgrades.length = 0` destroys
@@ -130,6 +136,20 @@ export const GANG_CASH_RESERVE = 5e7;
  *     absorb a large pile, and those wait until cash can reach them.
  */
 export const GEAR_BUDGET_FRACTION = 0.05;
+/**
+ * ...but never let that fraction block gear this cheap, whatever the bank looks like.
+ *
+ * A pure fraction is self-defeating at the moment gear matters most: at a fresh gang's ~$5m, 5% is
+ * $250k and the cheapest item is ~$925k after discount, so it buys NOTHING — while a member with no
+ * gear is exactly the member a $1m bat helps most. The fraction is there to stop a pricey weapon
+ * being churned by ascension; a floor at basic-kit prices costs nothing if it is churned, and the
+ * fraction still governs everything above it once the bank is real.
+ *
+ * Worth more than it looks. Gear multiplies the STAT, and `calculateSkill(exp, mult)` puts exp
+ * inside a log — so a mult of 1.5 reaches the Terrorism wall on ~22k exp where a bare member needs
+ * ~144k. Cheap gear is not a rounding error early; it is ~6x off the training grind.
+ */
+export const GEAR_MIN_BUDGET = 2e6;
 /**
  * Members parked on Territory Warfare while building power toward CLASH_ENGAGE_FLOOR.
  *

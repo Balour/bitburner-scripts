@@ -1,5 +1,5 @@
 import type { NS } from '@ns';
-import { GANG_CASH_RESERVE, GEAR_BUDGET_FRACTION } from '../lib/gang';
+import { GANG_CASH_RESERVE, GEAR_BUDGET_FRACTION, GEAR_MIN_BUDGET } from '../lib/gang';
 import { PORT_GANG_BUILD } from '../lib/ports';
 
 /**
@@ -77,7 +77,10 @@ export async function main(ns: NS) {
 
       const money = ns.getServerMoneyAvailable('home');
       if (money - item.cost < GANG_CASH_RESERVE) continue; // protect the personal-augment reserve
-      if (!item.isAug && item.cost > money * GEAR_BUDGET_FRACTION) continue; // gear churns — keep it modest
+      // Gear churns on ascension, so cap it — but never below basic-kit prices, or a fresh gang's
+      // small bank makes the cap tighter than the cheapest item and buys nothing at all.
+      const gearCap = Math.max(money * GEAR_BUDGET_FRACTION, GEAR_MIN_BUDGET);
+      if (!item.isAug && item.cost > gearCap) continue;
 
       if (ns.gang.purchaseEquipment(member.name, item.name)) {
         bought++;
