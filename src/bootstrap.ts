@@ -1,5 +1,5 @@
 import type { NS } from '@ns';
-import { VERSION } from './lib/ports';
+import { VERSION, BN_DISABLE } from './lib/ports';
 
 /**
  * ~3.0 GB. Run once after any reset. RAM-adaptive: launches only the scripts that
@@ -19,12 +19,19 @@ import { VERSION } from './lib/ports';
  *      `run /bootstrap.js --no-hacknet`        skip hacknet this run
  *      `run /bootstrap.js --no-gang --dry`     flags combine freely
  *
- * One `--no-<key>` exists per stack entry: --no-gang, --no-daemon, --no-monitor, --no-auto-buy,
- * --no-share, --no-hacknet. Flags are PER-INVOCATION — nothing is persisted. That is the whole
- * point: hold hacknet down early (`--no-hacknet`) while cash funnels to the gang, then just re-run
- * bootstrap plain once we're well off and it starts. "Enable" is the absence of a flag.
+ * Each stack entry auto-gets TWO flags: --no-<key> to force it off and --<key> to force it on.
+ * Full set: --no-gang/--gang, --no-daemon/--daemon, --no-monitor/--monitor, --no-auto-buy/--auto-buy,
+ * --no-share/--share, --no-hacknet/--hacknet. Flags are PER-INVOCATION — nothing is persisted. "Enable"
+ * is the absence of a flag, unless a per-BitNode default says otherwise (see below).
  *
- * `--no-<key>` prevents a LAUNCH; it does not kill a script that is already running. Kill it
+ * lib/ports BN_DISABLE is a per-BitNode default opt-out table: in a node where a subsystem isn't worth
+ * its RAM (e.g. BN4 runs hacknet at ~5%), its key is listed there and bootstrap skips it BY DEFAULT,
+ * with no flag needed. The current BitNode comes from ns.getResetInfo().currentNode.
+ *
+ * Resolution per key: FORCED-ON WINS > (config-off OR --no-<key>). So --<key> re-enables something the
+ * config turned off for one run; --no-<key> turns off something otherwise on; both together => on.
+ *
+ * A flag/config default prevents a LAUNCH; it does not kill a script that is already running. Kill it
  * yourself first if that's what you want.
  *
  * ns.flags is arg@5 with permissive:false, so an UNDECLARED flag (`--no-hacknat`) throws and kills
@@ -32,7 +39,7 @@ import { VERSION } from './lib/ports';
  * nothing would launch the very thing you meant to suppress.
  */
 /** This script's own revision — bump when THIS script's behaviour changes. */
-const REV = 'v5';
+const REV = 'v6';
 
 /** `key` names the --no-<key> flag. It is a string LITERAL, not an identifier, which is what keeps
  * it free: the static RAM parser harvests bare identifiers, so a variable named `share` would bill
@@ -58,13 +65,31 @@ const GANG_HEADROOM = 13;
 const LAUNCH_HEADROOM = 3;
 
 export async function main(ns: NS) {
-  // Schema is DERIVED from the tables, so adding a stack entry auto-adds its --no-<key> flag —
-  // there is no second list to forget to update. ns.flags is 0 GB.
-  const flags = ns.flags([...[GANG, ...STACK].map((e) => [`no-${e.key}`, false] as [string, boolean]), ['dry', false]]);
+  // Schema is DERIVED from the tables, so adding a stack entry auto-adds BOTH its --no-<key> and
+  // --<key> flags — there is no second list to forget to update. ns.flags is 0 GB; the names are
+  // string literals, so neither costs RAM even where a key collides with an NS API (share/hacknet).
+  const flags = ns.flags([
+    ...[GANG, ...STACK].flatMap(
+      (e) =>
+        [
+          [`no-${e.key}`, false],
+          [e.key, false],
+        ] as [string, boolean][],
+    ),
+    ['dry', false],
+  ]);
   const dry = flags.dry as boolean;
 
+  // Per-BitNode default opt-outs (union of the global key 0 and this node). getResetInfo is 1 GB —
+  // the only RAM this launcher spends beyond the base, trivial on a run-once-and-exit home script.
+  const bn = ns.getResetInfo().currentNode;
+  const defaultOff = new Set<string>([...(BN_DISABLE[0] ?? []), ...(BN_DISABLE[bn] ?? [])]);
+
   ns.tprint('');
-  ns.tprint(`=== bootstrap ${REV} [build ${VERSION}]${dry ? ' — DRY RUN, launching nothing' : ''} ===`);
+  ns.tprint(
+    `=== bootstrap ${REV} [build ${VERSION}] — BN${bn}, default-off: ${defaultOff.size ? [...defaultOff].join(', ') : 'none'}` +
+      `${dry ? ' — DRY RUN, launching nothing' : ''} ===`,
+  );
   const homeMax = ns.getServerMaxRam('home');
 
   // `inGang` is 0 GB, so this check is free even on a fresh 8 GB home in a gangless BitNode.
@@ -87,9 +112,13 @@ export async function main(ns: NS) {
       ns.tprint(`  running:  ${file}`);
       continue;
     }
-    if (flags[`no-${key}`] as boolean) {
+    // Force-on wins over both an explicit --no-<key> and a per-BitNode config default.
+    const forcedOn = flags[key] as boolean;
+    const off = !forcedOn && ((flags[`no-${key}`] as boolean) || defaultOff.has(key));
+    if (off) {
       disabledCount++;
-      ns.tprint(`  disabled: ${file.padEnd(14)} — --no-${key}`);
+      const reason = (flags[`no-${key}`] as boolean) ? `--no-${key}` : `BN${bn} default (--${key} to force on)`;
+      ns.tprint(`  disabled: ${file.padEnd(14)} — ${reason}`);
       continue;
     }
     const free = homeMax - (dry ? simUsed : ns.getServerUsedRam('home'));
@@ -112,6 +141,6 @@ export async function main(ns: NS) {
       ? `  home ${ns.format.ram(homeMax)} — too small for the whole stack; upgrade it and re-run bootstrap`
       : `  home ${ns.format.ram(homeMax)} — fits the whole stack`,
   );
-  if (disabledCount > 0) ns.tprint(`  ${disabledCount} disabled this run — re-run without the flag to start them`);
+  if (disabledCount > 0) ns.tprint(`  ${disabledCount} disabled this run — pass --<key> to force one on`);
   ns.tprint('');
 }

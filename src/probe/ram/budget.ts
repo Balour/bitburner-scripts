@@ -34,7 +34,11 @@ const BUDGET = [
     '2.30',
     'scan 0.2 + fileExists 0.1 + hasRootAccess 0.05 + numPorts/reqLevel/maxMoney 0.3 + hackingLevel 0.05',
   ],
-  ['/bootstrap.js', '3.10', 'isRunning 0.1 + exec 1.3 + maxRam/usedRam 0.1 + inGang 0 + flags 0 — just a launcher'],
+  [
+    '/bootstrap.js',
+    '4.10',
+    'isRunning 0.1 + exec 1.3 + maxRam/usedRam 0.1 + getResetInfo 1 + inGang 0 + flags 0 — just a launcher',
+  ],
   ['/probe/state.js', '2.75', 'getResetInfo 1 + fileExists 0.1 + maxRam 0.05 + inGang 0 — read-only'],
   // Gang. Split deliberately: one script referencing the whole gang API costs ~37 GB, which does
   // not fit the 32 GB home a fresh BitNode gives you. The controller holds only the cheap loop and

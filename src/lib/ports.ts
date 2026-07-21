@@ -8,7 +8,7 @@
  * unrelated file changes. Each script carries its own `REV` for that, printed as
  * `daemon v3 [build v17]`. Bump a script's REV when THAT script's behaviour changes; bump VERSION
  * on any change at all. */
-export const VERSION = 'v40';
+export const VERSION = 'v41';
 
 /** RAM to keep free on `home` for the controllers' TRANSIENT execs. Workers/share size themselves
  * as `maxRam - used - HOME_RESERVE`, and `used` already covers the resident controllers — so this
@@ -56,3 +56,12 @@ export const HACK_FRACTION = 0.25;
  * growthAnalyze(host, GROW_MULT) gives the grow threads; rank computes it remotely
  * because growthAnalyze costs 1 GB, which the lean daemon cannot afford. */
 export const GROW_MULT = 1.5;
+
+/** Per-BitNode default opt-outs for the bootstrap stack. Maps BitNode number -> stack keys that
+ * bootstrap skips BY DEFAULT there, because the subsystem isn't worth its RAM. Key 0 applies to
+ * EVERY BitNode; a specific number is unioned on top. e.g. BN4 runs hacknet at ~5% production.
+ * Per-run overrides still win: --<key> forces it on for one run, --no-<key> forces it off. */
+export const BN_DISABLE: Record<number, string[]> = {
+  0: [], // always-off list (currently none)
+  4: ['hacknet'], // BN4: hacknet production ~5% of normal
+};
