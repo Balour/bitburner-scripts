@@ -53,6 +53,8 @@ export interface Sing {
   getAugmentationPrice(aug: string): number;
   getAugmentationRepReq(aug: string): number;
   getAugmentationPrereq(aug: string): string[];
+  getAugmentationBasePrice(aug: string): number;
+  getAugmentationStats(aug: string): Record<string, number>;
   purchaseAugmentation(faction: string, aug: string): boolean;
   getOwnedAugmentations(purchased?: boolean): string[];
   installAugmentations(cbScript?: string): void;
@@ -92,4 +94,20 @@ export function reserve(ns: NS, gb: number, host?: string): number {
   const free = ns.getServerMaxRam(where) - ns.getServerUsedRam(where);
   const ownStatic = ns.getScriptRam(ns.getScriptName(), where);
   return ns.ramOverride(Math.min(gb, ownStatic + Math.max(free, 0)));
+}
+
+/**
+ * Reserve `gb`, but only proceed if we secured at least `need` (the script's true dynamic high-water).
+ * Home can be momentarily full (daemon rank + gang helpers + the controller overlapping), which clamps
+ * the reservation below what the script needs — then its first big call crashes with a RAM error. This
+ * bails out cleanly instead, logging so it's visible; the controller re-launches the helper on its next
+ * pass, when there's room. Returns true if OK to run.
+ */
+export function reserveOk(ns: NS, gb: number, need: number, host?: string): boolean {
+  const got = reserve(ns, gb, host);
+  if (got < need) {
+    ns.print(`reserve: got ${got.toFixed(1)} GB, need ${need} — host too full right now, exiting to retry.`);
+    return false;
+  }
+  return true;
 }

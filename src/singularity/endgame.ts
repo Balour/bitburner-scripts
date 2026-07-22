@@ -1,5 +1,5 @@
 import type { NS } from '@ns';
-import { sing, reserve } from './api';
+import { sing, reserveOk } from './api';
 
 /**
  * P3 endgame (Singularity), one-shot. Destroys w0r1d_d43m0n and enters the next BitNode, relaunching the
@@ -12,7 +12,7 @@ import { sing, reserve } from './api';
 const REV = 'v1';
 
 export async function main(ns: NS) {
-  reserve(ns, 40); // destroyW0r1dD43m0n is 32 GB base
+  if (!reserveOk(ns, 40, 34)) return; // destroyW0r1dD43m0n is 32 GB base
   const s = sing(ns);
   const nextBN = Number(ns.args[0] ?? ns.getResetInfo().currentNode);
   ns.tprint(`=== endgame ${REV} — destroying w0r1d_d43m0n, entering BN${nextBN} ===`);

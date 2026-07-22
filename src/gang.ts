@@ -92,7 +92,7 @@ import { PORT_GANG, PORT_GANG_BUILD, VERSION } from './lib/ports';
  * held everything, but half the truth on a fresh seven-way-split node. It is now everything we don't
  * hold. The rate stays conservative: it assumes both clashes land on the strongest rival, when the
  * engine actually picks opponents at random and the weaker ones pay out more. */
-const REV = 'v13';
+const REV = 'v14';
 
 const HELPER_ASCEND = '/gang/ascend.js';
 const HELPERS = [HELPER_ASCEND, '/gang/equip.js', '/gang/territory.js'];
@@ -220,9 +220,13 @@ function assign(
   warfare: Warfare,
   useFormulas: boolean,
 ): { plan: Map<string, string>; building: boolean } {
-  // Respect gates recruiting and converts to the faction rep we need for The Red Pill. Money
-  // only becomes the objective once the roster is full.
-  const wantRespect = members.length < MAX_MEMBERS;
+  // Respect gates recruiting and converts to the faction rep we need for The Red Pill. Money only
+  // becomes the objective once the roster is (near) full — but the LAST recruit costs ~5^9 (1.95M)
+  // respect, ~5x the one before it, so waiting for it strands the gang on respect-only (Terrorism,
+  // ~zero money) for hours: no money -> no gear -> weak roster -> warfare never self-enables. So flip
+  // to money one member early; the 12th recruits opportunistically off money tasks' respect trickle.
+  const ECONOMY_ROSTER = MAX_MEMBERS - 1;
+  const wantRespect = members.length < ECONOMY_ROSTER;
   const score = (member: MemberInfo, task: TaskStats): number => {
     if (useFormulas) {
       return wantRespect
@@ -275,7 +279,7 @@ function assign(
   let slots = 0;
   let building = false;
   let garrison = 0;
-  if (members.length >= MAX_MEMBERS) {
+  if (members.length >= ECONOMY_ROSTER) {
     if (warfare.engaged) {
       // Two different jobs, and only the first needs the whole roster.
       //

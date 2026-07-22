@@ -1,7 +1,7 @@
 import type { NS } from '@ns';
 import { VERSION, PORT_SING_STATUS, PORT_SING_PAUSE, SING_FILE } from './lib/ports';
 import { strategyFor } from './lib/strategy';
-import { sing, reserve } from './singularity/api';
+import { sing, reserve, isBackdoored } from './singularity/api';
 import { crimeStep } from './singularity/crime';
 
 /**
@@ -57,6 +57,19 @@ async function waitPid(ns: NS, pid: number) {
 }
 
 const allProgramsOwned = (ns: NS) => PROGRAMS.every((p) => ns.fileExists(p, 'home'));
+
+/** The backdoor-gated faction servers. */
+const FACTION_SERVERS = ['CSEC', 'avmnite-02h', 'I.I.I.I', 'run4theh111z', 'fulcrumassets'];
+
+/** True only if some faction server is rooted, level-eligible, and NOT yet backdoored — i.e. a pass would
+ * actually DO something. Gating the pass on this means a run where they're all done (or all still level-
+ * gated) never fires backdoor.js, so it never interrupts the action slot for nothing. */
+function backdoorPending(ns: NS): boolean {
+  const level = ns.getHackingLevel();
+  return FACTION_SERVERS.some(
+    (h) => ns.hasRootAccess(h) && level >= ns.getServerRequiredHackingLevel(h) && !isBackdoored(ns, h),
+  );
+}
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
@@ -150,11 +163,11 @@ export async function main(ns: NS) {
       lastPrograms = elapsedMs;
     }
 
-    // Backdoor faction servers once hacking is high enough for the first one (CSEC needs 56) — earlier is
-    // pointless and would just cancel crimes. Uses the slot briefly; crime/rep-work resume next iteration.
-    if (ns.getHackingLevel() >= 50 && elapsedMs - lastBackdoor >= BACKDOOR_EVERY_MS) {
-      s['stopAction']();
-      await waitPid(ns, ns.exec('/singularity/backdoor.js', host));
+    // Backdoor faction servers as hacking climbs — but ONLY when one is actually rooted, eligible, and
+    // un-backdoored, so a no-op pass never interrupts the action slot (that was the periodic focus loss).
+    // No stopAction: installBackdoor cancels the current action itself, and only when it truly runs.
+    if (elapsedMs - lastBackdoor >= BACKDOOR_EVERY_MS) {
+      if (backdoorPending(ns)) await waitPid(ns, ns.exec('/singularity/backdoor.js', host));
       lastBackdoor = elapsedMs;
     }
 

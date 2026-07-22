@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { strategyFor } from '../lib/strategy';
-import { sing, reserve } from './api';
+import { sing, reserveOk } from './api';
 
 /**
  * P2 install (Singularity), one-shot. Owns the install DECISION so the controller stays lean: it checks
@@ -15,7 +15,7 @@ const REV = 'v1';
 
 export async function main(ns: NS) {
   const flags = ns.flags([['force', false]]);
-  reserve(ns, 16);
+  if (!reserveOk(ns, 16, 12)) return;
   const s = sing(ns);
   const strat = strategyFor(ns.getResetInfo().currentNode);
 

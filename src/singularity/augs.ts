@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { strategyFor } from '../lib/strategy';
-import { sing, reserve } from './api';
+import { sing, reserveOk } from './api';
 
 /**
  * P2 augment buyer (Singularity), one-shot. Buys every affordable augment we have the rep + prereqs for,
@@ -15,7 +15,7 @@ const REV = 'v1';
 const NFG = 'NeuroFlux Governor';
 
 export async function main(ns: NS) {
-  reserve(ns, 40);
+  if (!reserveOk(ns, 40, 28)) return;
   const s = sing(ns);
   const strat = strategyFor(ns.getResetInfo().currentNode);
   const money = () => ns.getServerMoneyAvailable('home');

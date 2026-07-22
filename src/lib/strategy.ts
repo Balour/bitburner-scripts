@@ -77,10 +77,14 @@ export interface EndgameStrategy {
   hackReq: number;
 }
 
-/** Bounded home RAM auto-upgrade. Home resets to 32 GB on entering a node, so this repeats per run. */
+/** Home RAM auto-upgrade — dynamic, so the ceiling scales with the run's stage (= wealth). */
 export interface HomeStrategy {
-  /** Upgrade home RAM (doubling each step) up to this cap, then stop. 0 disables auto-upgrade. */
+  /** Hard maximum home RAM — never upgrade past this. 0 disables auto-upgrade. */
   ramCap: number;
+  /** Only take the next doubling when it costs at most this fraction of current cash. This is what makes
+   * the effective ceiling STAGE-AWARE: early (cash-poor) home stays small so money goes to openers/augs;
+   * as the economy grows the doublings become cheap and home rises on its own, up to `ramCap`. */
+  costFraction: number;
 }
 
 export interface Strategy {
@@ -129,7 +133,8 @@ const DEFAULT: Omit<Strategy, 'disabledSubsystems'> = {
     hackReq: 3000, // WorldDaemonDifficulty 1
   },
   home: {
-    ramCap: 128,
+    ramCap: 512, // hard ceiling; the cost gate below is the real limiter until the economy is large
+    costFraction: 0.2, // take a doubling only when it's <= 20% of current cash
   },
 };
 
@@ -141,12 +146,17 @@ const OVERRIDES: Record<number, StrategyOverride> = {
   4: {
     crime: { needGang: true },
     augs: { focus: 'hacking' },
-    // Four Sigma first: its augs (e.g. the ADR-V rep boosters) multiply all faction/company rep gain.
-    rep: { companyRepPhase: true, companyTargets: ['Four Sigma'] },
+    // Grind order from /probe/aug-priority.js, exclusive augs first. Bachman leads (SmartJaw — a
+    // rep-booster + charisma that only it sells); OmniTek/Clarke for their hacking augs. Four Sigma is
+    // LAST because its ADR-V rep-boosters are sold by many factions and get owned early — repwork skips a
+    // company whose augs we already own, so it costs nothing to keep it as a fallback. Trim as you like.
+    rep: {
+      companyRepPhase: true,
+      companyTargets: ['Bachman & Associates', 'OmniTek Incorporated', 'Clarke Incorporated', 'Four Sigma'],
+    },
     endgame: { nextNode: 4, hackReq: 9000 },
-    // 64 GB fits the controller + daemon + gang + optional stack on home; cheap (one doubling) and
-    // preserves cash for founding/augs. The big P2 helpers run off-home when needed.
-    home: { ramCap: 64 },
+    // (home uses the default dynamic gate: rises with wealth up to 512 GB, so it ends the RAM squeeze on
+    // its own once the gang is earning, without starving the early cash-poor bootstrap.)
     // Install in bigger batches: an aug-install RESETS money, stats, hacking level, port openers and
     // purchased servers (only home RAM, aug multipliers and the gang survive), so each one pays a
     // re-bootstrap tax. 8 amortizes that; most-expensive-first buying keeps the 1.9× escalation in check.

@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { PORT_SING_PAUSE } from '../lib/ports';
-import { sing, reserve } from './api';
+import { sing, reserveOk } from './api';
 
 /**
  * P2 crime-for-money (Singularity), PERSISTENT. Commits the best money crime on a loop while cash is low —
@@ -21,7 +21,7 @@ const CANDIDATES: { key: 'mug' | 'homicide'; money: number; sec: number }[] = [
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
-  reserve(ns, 16);
+  if (!reserveOk(ns, 16, 12)) return;
   const s = sing(ns);
   const nameOf = (k: 'mug' | 'homicide') => (k === 'homicide' ? ns.enums.CrimeType.homicide : ns.enums.CrimeType.mug);
 

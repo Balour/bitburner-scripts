@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { crawl } from '../lib/net';
-import { sing, reserve } from './api';
+import { sing, reserveOk } from './api';
 
 /**
  * P0 program acquisition (Singularity). Buys the TOR router, then the port openers and Formulas.exe from
@@ -35,7 +35,7 @@ export async function main(ns: NS) {
 
   // Cover the bracket-hidden Singularity calls (purchaseTor 2, purchaseProgram 2, getDarkwebProgramCost
   // 0.5, getDarkwebPrograms 1) plus a re-root exec (1.3). ×1 inside BN4; clamped to the host's RAM.
-  reserve(ns, 16);
+  if (!reserveOk(ns, 16, 10)) return;
   const s = sing(ns);
 
   ns.tprint('');

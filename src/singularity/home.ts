@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { strategyFor } from '../lib/strategy';
-import { sing, reserve } from './api';
+import { sing, reserveOk } from './api';
 
 /**
  * P3 home upgrade (Singularity), one-shot. Doubles home RAM while affordable, up to `strat.home.ramCap`,
@@ -12,14 +12,16 @@ import { sing, reserve } from './api';
 const REV = 'v1';
 
 export async function main(ns: NS) {
-  reserve(ns, 12);
+  if (!reserveOk(ns, 12, 6)) return;
   const s = sing(ns);
   const strat = strategyFor(ns.getResetInfo().currentNode);
 
   let n = 0;
   while (ns.getServerMaxRam('home') < strat.home.ramCap) {
     const cost = s['getUpgradeHomeRamCost']();
-    if (ns.getServerMoneyAvailable('home') - cost < strat.augs.cashReserve) break;
+    const money = ns.getServerMoneyAvailable('home');
+    if (money - cost < strat.augs.cashReserve) break; // never dip below the cash reserve
+    if (cost > money * strat.home.costFraction) break; // too pricey vs current wealth — wait for a later stage
     if (!s['upgradeHomeRam']()) break;
     n++;
   }

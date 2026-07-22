@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { crawl, pathTo } from '../lib/net';
-import { sing, reserve, isBackdoored } from './api';
+import { sing, reserveOk, isBackdoored } from './api';
 
 /**
  * Backdoor pass (Singularity), decoupled from rooting. Rooting stays immediate ("root now, backdoor
@@ -48,7 +48,7 @@ export async function main(ns: NS) {
 
   // Cover the bracket-hidden calls: getCurrentServer 2, connect 2, installBackdoor 2, getServer 2, plus
   // scan (via pathTo). ×1 inside BN4; clamped to the running host's RAM.
-  reserve(ns, 24);
+  if (!reserveOk(ns, 24, 20)) return;
   const s = sing(ns);
   const level = ns.getHackingLevel();
 
