@@ -212,15 +212,23 @@ function step(
   const host = t.host;
   const b = batchOf(t);
 
+  // Weaken to min FIRST, for ANY target above min security — NOT gated on `sustain`. High security makes
+  // every op slow/expensive, so a target isn't workable until near min regardless of whether its full
+  // batch fits the pool. Weaken as much as fits (weaken-only never desyncs, so a PARTIAL pass is safe and
+  // permanently lowers security); only RAM-starved if not even one thread fits. This is the un-stick for a
+  // small post-install pool + full-money/base-security targets, which otherwise fell straight to 'slow'
+  // and never got weakened at all.
+  const sec = ns.getServerSecurityLevel(host);
+  if (sec > t.minSec + SEC_SLACK) {
+    const want = Math.ceil((sec - t.minSec) / WEAKEN_SEC);
+    const affordable = Math.min(want, Math.floor(poolFree(slots) / WEAKEN_COST));
+    if (affordable < 1) return true;
+    job.pids = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, affordable, host, slots, copied);
+    job.phase = 'weaken';
+    return affordable < want; // still short on RAM if we couldn't fit the full weaken
+  }
+
   if (sustain) {
-    const sec = ns.getServerSecurityLevel(host);
-    if (sec > t.minSec + SEC_SLACK) {
-      const want = Math.ceil((sec - t.minSec) / WEAKEN_SEC);
-      if (want * WEAKEN_COST > poolFree(slots)) return true; // RAM-starved
-      job.pids = dispatch(ns, WEAKEN_FILE, WEAKEN_COST, want, host, slots, copied);
-      job.phase = 'weaken';
-      return false;
-    }
     if (b.ram > poolFree(slots)) return true; // whole batch must fit
     const prepping = money < maxMoney * PREP_DONE;
     const hackT = prepping ? 0 : b.hackT;
@@ -281,7 +289,7 @@ function stepXp(ns: NS, t: Target, slots: Slot[], job: Job, copied: Set<string>,
 }
 
 /** This script's own revision — bump when THIS script's behaviour changes. */
-const REV = 'v1';
+const REV = 'v4';
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
@@ -304,7 +312,10 @@ export async function main(ns: NS) {
     const level = ns.getHackingLevel();
     const hosts = rooted(ns, crawl(ns));
 
-    if (targets.length === 0 || crossedBreakpoint(lastLevel, level) || tick % RERANK_EVERY === 0) {
+    // `level < lastLevel` catches a hacking-level DROP — an augment install resets it to ~1, and the stale
+    // (non-empty) high-level target list is then all unhackable, so we must re-rank down or sit idle for
+    // up to RERANK_EVERY ticks. crossedBreakpoint only fires on the way UP.
+    if (targets.length === 0 || crossedBreakpoint(lastLevel, level) || level < lastLevel || tick % RERANK_EVERY === 0) {
       const rootPid = ns.exec(ROOT_FILE, 'home');
       if (rootPid !== 0) await awaitPids(ns, [rootPid]);
       ns.print(`re-rank at level ${level} (was ${lastLevel})`);
@@ -367,7 +378,7 @@ export async function main(ns: NS) {
     }
 
     if (tick % LOG_EVERY === 0) {
-      const phases = { maintain: 0, prep: 0, weaken: 0, drain: 0, xp: 0, 'xp-w': 0, drained: 0, slow: 0 };
+      const phases = { maintain: 0, prep: 0, weaken: 0, drain: 0, xp: 0, 'xp-w': 0, drained: 0, slow: 0, idle: 0 };
       for (const job of jobs.values()) {
         const key = job.phase as keyof typeof phases;
         if (key in phases) phases[key] += 1;
@@ -378,8 +389,8 @@ export async function main(ns: NS) {
       const poolMax = hosts.reduce((sum, h) => sum + ns.getServerMaxRam(h), 0);
       const poolUsed = Math.max(0, poolMax - poolFree(slots));
       ns.print(
-        `t${tick}: ${phases.maintain} maintain, ${phases.prep} prep, ${phases.drain} drain, ` +
-          `${phases.xp + phases['xp-w']} xp, ${phases.drained + phases.slow} idle | ` +
+        `t${tick}: ${phases.maintain} maintain, ${phases.prep} prep, ${phases.weaken} weaken, ${phases.drain} drain, ` +
+          `${phases.xp + phases['xp-w']} xp, ${phases.drained + phases.slow + phases.idle} idle | ` +
           `pool ${ns.format.ram(poolUsed)}/${ns.format.ram(poolMax)} | net ${rate >= 0 ? '+' : ''}$${ns.format.number(rate)}/sec`,
       );
     }

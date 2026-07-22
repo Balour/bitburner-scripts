@@ -8,7 +8,7 @@
  * unrelated file changes. Each script carries its own `REV` for that, printed as
  * `daemon v3 [build v17]`. Bump a script's REV when THAT script's behaviour changes; bump VERSION
  * on any change at all. */
-export const VERSION = 'v41';
+export const VERSION = 'v57';
 
 /** RAM to keep free on `home` for the controllers' TRANSIENT execs. Workers/share size themselves
  * as `maxRam - used - HOME_RESERVE`, and `used` already covers the resident controllers — so this
@@ -42,8 +42,20 @@ export const PORT_GANG = 3;
  * power to back it. */
 export const PORT_GANG_BUILD = 4;
 
+/** The Singularity controller publishes its progress record here (phase, karma, homicide%, factions,
+ * augs, last/next action + timestamp) for monitor.js and for debugging an unattended run. Free I/O. */
+export const PORT_SING_STATUS = 5;
+
+/** Manual-play opt-out: write '1' here to make the Singularity controller yield the player action slot
+ * (it stops its current action and idles); '0' or empty to resume. Lets you sit down and play without
+ * the crime/faction grind fighting you for the slot. */
+export const PORT_SING_PAUSE = 6;
+
 /** Written on `home` for humans and for monitor.js. `ns.read`/`ns.write` are 0 GB. */
 export const TARGETS_FILE = '/data/targets.json';
+
+/** The Singularity controller's progress record, mirrored to disk so it survives restarts. */
+export const SING_FILE = '/data/singularity.json';
 
 /** Where contracts/find.js records what it located. */
 export const CONTRACTS_FILE = '/data/contracts.json';
@@ -63,5 +75,9 @@ export const GROW_MULT = 1.5;
  * Per-run overrides still win: --<key> forces it on for one run, --no-<key> forces it off. */
 export const BN_DISABLE: Record<number, string[]> = {
   0: [], // always-off list (currently none)
-  4: ['hacknet'], // BN4: hacknet production ~5% of normal
+  // BN4: hacknet ~5% of normal. monitor/share/auto-buy are held off during the karma grind so the ~26 GB
+  // Singularity controller fits a 32 GB home alongside the daemon (it runs on home, where HOME_RESERVE
+  // protects it from the daemon's pool workers — running it on a pool host lets the daemon steal its RAM).
+  // Re-enable them (e.g. `run /bootstrap.js --auto-buy`) once home is upgraded past ~48 GB and there's room.
+  4: ['hacknet', 'monitor', 'share', 'auto-buy'],
 };

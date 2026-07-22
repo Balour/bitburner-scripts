@@ -46,6 +46,15 @@ const REV = 'v6';
  * ns.share's 2.4 GB and `hacknet`/`exec`/`run` likewise. Keep them strings. */
 const STACK = [
   { key: 'daemon', file: '/daemon.js', ram: 4.85, why: 'root + rank + decoupled hacking' },
+  // A tiny one-shot placer: it puts the RAM-heavy Singularity controller on home-or-a-pool-host and
+  // exits, so its own footprint here is small. The controller self-guards on SF-4 (no-op without it);
+  // add 'singularity' to BN_DISABLE for a node where you don't want the loop even with SF-4.
+  {
+    key: 'singularity',
+    file: '/singularity/launch.js',
+    ram: 2.6,
+    why: 'Singularity loop: programs, backdoor, crime->gang->augs',
+  },
   { key: 'monitor', file: '/monitor.js', ram: 2.4, why: 'dashboard' },
   { key: 'auto-buy', file: '/auto-buy.js', ram: 6.05, why: 'compound income into pool RAM' },
   { key: 'share', file: '/share.js', ram: 3.85, why: 'reputation from idle RAM' },
