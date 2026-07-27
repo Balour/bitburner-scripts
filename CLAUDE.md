@@ -44,9 +44,11 @@ Other v3 changes:
 > "BitNode 1, zero Source-Files, 8 GB home" long after that stopped being true and sent planning off
 > a cliff. The probe is the authority; everything below is a snapshot with a date on it.
 
-**BitNode 2, run #2. SF-1.1 and SF-2.1, nothing else.** This is the constraint that shapes
-everything. Probe output, 2026-07-17: BN2 · home 128 GB · in a gang · Formulas.exe **not** owned ·
-SF-1.1, SF-2.1 · 0 augs installed.
+**SF-1.1, SF-2.3, SF-4.3.** BN1 cleared once, BN2 and BN4 cleared three times each.
+
+> Player-reported 2026-07-27, **not** probe output — the Source-File list is trustworthy, everything
+> else about the current run (node, home RAM, gang, programs, augs) is UNKNOWN here. Run
+> `/probe/state.js` and replace this block with its output before planning against it.
 
 From `Prestige.ts` — starting home RAM on entering a BitNode:
 
@@ -57,29 +59,42 @@ else setMaxRam(8);
 ```
 
 - **SF-1.1 means a new BitNode starts at 32 GB home**, not 8. The 8 GB era is behind us.
-- **128 GB on entry needs SF-9 level ≥ 2** (Hacknet Servers, BN9), which we do not have. The current
-  128 GB is *purchased upgrades* and drops back to 32 on entering the next BitNode.
+- **128 GB on entry needs SF-9 level ≥ 2** (Hacknet Servers, BN9), which we do not have — and level 2
+  means **two** BN9 clears, not one. Any 128 GB we are sitting on is *purchased upgrades*, and drops
+  back to 32 on entering the next BitNode.
 - `prestigeAugmentation` does **not** reset home RAM. RAM upgrades survive augment installs and reset
   only on entering a new BitNode.
 
-**SF-2.1 means a gang in any BitNode** — and BN2 additionally bypasses the -54,000 karma gate
-(`bitNodeN === 2`), which no other node does. That karma grind is a Singularity script to write in
-BN4, not here.
+**SF-2.3 means a gang in any BitNode** — but only BN2 bypasses the -54,000 karma gate
+(`bitNodeN === 2`). Everywhere else the gang is founded by the homicide grind in
+`singularity/crime.ts`, gated on `strategy.crime.needGang`.
 
-**The plan: finish this BN2 run, then BN4.** The gang stack has never run from cold, and BN4 gives
-exactly one shot at it on the game's hardest node — BN2 is the cheap testbed for the same code path.
-The older "clear BN1 three times → SF-1.3" plan is **superseded**: BN1 was cleared once and we moved
-on.
+**SF-4.3 means full `ns.singularity` at no RAM penalty.** Program buying, the TOR router / darkweb,
+backdoors, faction joining, rep work, augment purchase and install are all automated — that is the
+`src/singularity/` stack. Anything in this doc still framed as "manual because no SF-4" is stale.
 
-**No SF-4 means no `ns.singularity`** — still true, and still the biggest constraint. No automating:
-buying port programs, the TOR router / darkweb (`purchaseTor`, `purchaseProgram`,
-`getDarkwebPrograms` are all Singularity), backdoors, faction joining, or augment installs. Those are
-manual. Legacy `program-buyer.ts` and `backdoor-all.ts` are dead code for us. **SF-4 is the point of
-going to BN4.**
+**Next target: BN5 "Artificial Intelligence", one clear.** Cheapest exit remaining —
+`WorldDaemonDifficulty 1.5` → hacking **4500**, against BN4's 9000 and BN2's 15000. The prize is
+**SF-5.1**, which grants:
 
-**No SF-5, and Formulas.exe not owned** ($5,000,000,000, or hacking level 1000 to write). Thread math
-stays manual — that is what `rank.ts`'s min-security projection is for. `rank-formulas.ts` is ready
-for the day this changes.
+- **Formulas.exe on every prestige.** `Prestige.ts` pushes it from both `prestigeSourceFile` and
+  `prestigeAugmentation` when `canAccessBitNodeFeature(5)`. Since programs otherwise die on entering a
+  BitNode, this is the difference between `rank-formulas.ts` being dead code that costs $5b per run to
+  wake up and it being the permanent path from second zero, with no post-install gap.
+- `ns.getBitNodeMultipliers()` — lets `lib/strategy.ts` derive per-node config instead of hardcoding
+  `OVERRIDES`.
+- **Intelligence**, the one stat that never resets across BitNodes, plus +8% hacking multipliers.
+
+BN5 config already landed: `OVERRIDES[5]` in `lib/strategy.ts` and `BN_DISABLE[5]` in `lib/ports.ts`.
+
+**BN9 was considered and deferred** — it is the node most hostile to this codebase:
+`CloudServerLimit: 0` (no purchased servers at all, so `auto-buy.ts` / `buy-servers.ts` /
+`lib/cloud.ts` are inert), `HomeComputerRamCost: 5`, `ServerMaxMoney 0.01` × `ScriptHackMoney 0.1`
+(daemon income down ~1000×), `HackExpGain: 0.05`. Revisit only after SF-5.
+
+**Until BN5 is cleared, Formulas.exe is still not owned** ($5,000,000,000, or hacking level 1000 to
+write). Thread math stays on `rank.ts`'s min-security projection; the daemon execs `rank-formulas.js`
+instead the moment the file exists on home.
 
 **Programs do not survive entering a BitNode** — only NUKE.exe carries over, so every run re-buys the
 port openers and SQLInject. Anywhere in this doc that calls a program "owned" is describing a *past*

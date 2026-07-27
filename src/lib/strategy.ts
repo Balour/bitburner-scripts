@@ -346,6 +346,41 @@ const OVERRIDES: Record<number, StrategyOverride> = {
     // re-bootstrap tax. 8 amortizes that; most-expensive-first buying keeps the 1.9× escalation in check.
     install: { minAugsQueued: 8 },
   },
+
+  // BN5 "Artificial Intelligence": the CHEAPEST exit left — WorldDaemonDifficulty 1.5 => hacking 4500,
+  // against BN4's 9000 and BN2's 15000. Verified BN5 multipliers: ScriptHackMoney 0.15, HackExpGain 0.5,
+  // AugmentationMoneyCost 2, HacknetNodeMoney 0.2, CrimeMoney 0.5, CloudServerSoftcap 1.2,
+  // GangUniqueAugs 0.5. Note what is ABSENT: no GangSoftcap penalty and no HackingLevelMultiplier
+  // penalty, so the gang runs at full strength and the climb to 4500 is honest.
+  //
+  // Why we come here: SF-5 grants Formulas.exe on EVERY prestige (`Prestige.ts` pushes it from both
+  // `prestigeSourceFile` and `prestigeAugmentation` when `canAccessBitNodeFeature(5)`). Programs
+  // otherwise die on entering a BitNode, so today `rank-formulas.ts` is dead code that would cost $5b
+  // per run to wake up; after SF-5 it is the permanent path from second zero, with no post-install
+  // window. SF-5 also grants `getBitNodeMultipliers()` and permanent Intelligence.
+  5: {
+    // ScriptHackMoney 0.15 means hacking is not the economy here either — the gang is. BN5 does NOT
+    // bypass the karma gate (only `bitNodeN === 2` does), so this is the same -54k homicide cold start
+    // as BN4, driven by singularity/crime.ts.
+    crime: { needGang: true },
+    // AugmentationMoneyCost 2: every aug costs double, so keep more liquid and install in bigger
+    // batches to amortize the re-bootstrap tax over fewer resets.
+    augs: { focus: 'hacking', cashReserve: 20e6 },
+    install: { minAugsQueued: 8 },
+    rep: {
+      companyRepPhase: true,
+      companyTargets: ['Bachman & Associates', 'OmniTek Incorporated', 'Clarke Incorporated', 'Four Sigma'],
+      // combatGate deliberately LEFT AT THE EMPTY DEFAULT. The Illuminati/QLink detour exists to make
+      // BN4's 9000 climb tractable — it is worth many cycles only because the XP needed is exponential
+      // in `level / mult`. At 4500 with no HackingLevelMultiplier penalty the ordinary aug batch should
+      // carry the push. Turn it on only if `pushAbandonMs` actually fires in practice.
+    },
+    // autoDestroy OFF (default), so `nextNode` is inert: we backdoor w0r1d_d43m0n, the BitVerse opens,
+    // and the node choice stays manual. The plan is ONE BN5 clear (SF-5.1 is where Formulas.exe and
+    // getBitNodeMultipliers live; levels 2/3 only raise the hacking multiplier bonus 8% -> 12% -> 14%),
+    // then reassess — so do not assume a repeat run.
+    endgame: { nextNode: 5, hackReq: 4500 }, // 3000 * WorldDaemonDifficulty (1.5)
+  },
 };
 
 /** Shallow-merge one override section onto its default. Sections are flat, so this is enough. */

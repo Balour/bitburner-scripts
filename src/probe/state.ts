@@ -10,7 +10,7 @@ import type { NS } from '@ns';
  *
  * Run: `run /probe/state.js`
  */
-const REV = 'v2';
+const REV = 'v3';
 
 /** Programs do NOT survive entering a BitNode — only NUKE.exe carries over. So every run re-buys
  * these, and any doc claiming one is "owned" is talking about a past run until proven otherwise.
@@ -32,8 +32,13 @@ const NOTABLE: [number, string][] = [
   [1, 'home RAM on entry: 32 GB (vs 8 without it) + all multipliers'],
   [2, 'gang in ANY BitNode (BN2 also bypasses the -54k karma gate)'],
   [4, 'ns.singularity — program buying, TOR, backdoor, factions, augs'],
-  [5, 'ns.formulas.* (exact thread math without Formulas.exe)'],
-  [9, 'home RAM on entry: 128 GB at level >= 2'],
+  // NOT "formulas without Formulas.exe" — SF-5 GRANTS the program. Prestige.ts pushes it from both
+  // prestigeSourceFile and prestigeAugmentation, so it is on home from second zero of every BitNode
+  // and re-granted after every install: no post-install window, nothing to re-buy. Also unlocks
+  // getBitNodeMultipliers() and permanent Intelligence.
+  [5, 'Formulas.exe granted every prestige + getBitNodeMultipliers() + Intelligence'],
+  [9, 'home RAM on entry: 128 GB — needs level >= 2, i.e. TWO BN9 clears'],
+  [10, 'ns.sleeve + grafting in any BitNode — ONE sleeve per SF level (3 max outside BN10)'],
 ];
 
 export async function main(ns: NS) {

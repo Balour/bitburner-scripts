@@ -8,7 +8,7 @@
  * unrelated file changes. Each script carries its own `REV` for that, printed as
  * `daemon v3 [build v17]`. Bump a script's REV when THAT script's behaviour changes; bump VERSION
  * on any change at all. */
-export const VERSION = 'v84';
+export const VERSION = 'v85';
 
 /** RAM to keep free on `home` for the controllers' TRANSIENT execs. Workers/share size themselves
  * as `maxRam - used - HOME_RESERVE`, and `used` already covers the resident controllers — so this
@@ -99,4 +99,13 @@ export const BN_DISABLE: Record<number, string[]> = {
   // protects it from the daemon's pool workers — running it on a pool host lets the daemon steal its RAM).
   // Re-enable them (e.g. `run /bootstrap.js --auto-buy`) once home is upgraded past ~48 GB and there's room.
   4: ['hacknet', 'monitor', 'share', 'auto-buy'],
+  // BN5: same 32 GB home squeeze as BN4 — the karma grind needs the ~26 GB Singularity controller to fit
+  // alongside the daemon, and everything here is what gets sacrificed for it. Not a judgement on the
+  // subsystems, just RAM triage; re-enable once home clears ~48 GB.
+  //
+  // hacknet is the one worth reconsidering FIRST: BN5's HacknetNodeMoney is 0.2, four times BN4's 0.05.
+  // `run /bootstrap.js --hacknet` forces it back on for a run. No code change is needed for the nerf
+  // itself — hacknet.ts's `effMult()` backs the live production multiplier out of an existing node, so
+  // its payback gate re-prices every upgrade against the real BitNode automatically.
+  5: ['hacknet', 'monitor', 'share', 'auto-buy'],
 };
