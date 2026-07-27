@@ -43,11 +43,90 @@ export interface AugStrategy {
   neuroFluxDump: boolean;
 }
 
+/**
+ * A late-game faction worth deliberately unlocking for one specific augmentation, gated behind COMBAT stats
+ * the hacking loop never trains. Illuminati (QLink) is the case this exists for.
+ *
+ * Why it needs handling at all: `Player.prestigeAugmentation` sets `this.factions = []`, and zeroes both the
+ * skills AND `exp.strength`/`defense`/`dexterity`/`agility`. So faction MEMBERSHIP and combat progress are
+ * wiped by every install; only aug multipliers and faction FAVOR persist. Qualifying is not a one-time
+ * achievement — it is re-earned each cycle, and a hacking loop has no other reason to touch combat.
+ *
+ * HOW IT IS SATISFIED: NOT the gym. Gym buys stats with pure action-slot time and pays no reputation, which
+ * is a bad trade for anything past the early game. Instead `repwork.ts` takes the faction work it was going
+ * to do anyway and picks a work type that also pays combat XP (field/security instead of hacking). The rep
+ * still lands; only the flavour of XP alongside it changes.
+ *
+ * That works because the skill curve is exponential in `level / mult` (see `lib/skills.ts`). Starting from
+ * zero exp, a cycle opens at `floor(mult * 0.99)` — so multipliers alone never reach the gate — but the exp
+ * needed to close it collapses as multipliers stack: ~2.8k exp at combat mult 20 versus ~937k at mult 5.
+ * The lever is therefore BUYING COMBAT AUGMENTATIONS, which the aug buyer already does whenever they are
+ * affordable; the work-type switch just supplies the small amount of XP that multipliers cannot conjure.
+ *
+ * The non-combat thresholds decide TIMING, and are not redundant with the game's own check: combat progress
+ * expires at the next install, so steering work before the other requirements are met spends the slot on
+ * levels that are gone before an invite can arrive.
+ */
+export interface CombatGate {
+  /** Faction to unlock. Empty string disables the whole step. */
+  faction: string;
+  /** Every combat skill must reach this — `haveCombatSkills(n)` requires all of str/def/dex/agi, so the
+   * minimum of the four is the only one that matters. */
+  combat: number;
+  /** Don't steer work until hacking, cash and installed augs already clear the faction's other gates. */
+  hacking: number;
+  money: number;
+  augs: number;
+}
+
 /** How reputation is earned to hit aug rep requirements. The controller compares candidates by
  * unlocked-aug-value per action-slot-second each cycle; these are the knobs that gate the choice. */
 export interface RepStrategy {
-  /** Favor at which `donateToFaction` unlocks — buy rep with money instead of the action slot. 150. */
-  favorDonateThreshold: number;
+  /** Buy faction rep with money (`donateToFaction`) instead of grinding it on the action slot, once
+   * favor allows. The favor gate is deliberately NOT configured here: `ns.getFavorToDonate()` (0.1 GB,
+   * base NS, not Singularity-taxed) reports the live per-BitNode threshold. It is
+   * `150 * BitNodeMultipliers.FavorToDonateToFaction` — 150 in BN4, but 75 in BN3 and 0 in BN8, so a
+   * hardcoded constant here would simply be wrong. */
+  donate: boolean;
+  /** Ceiling on one donation pass: this fraction of cash ABOVE `augs.cashReserve`.
+   *
+   * This single number IS the joint budget mechanism. Donated rep and aug prices are paid out of the
+   * same wallet, and donated rep is a PER-CYCLE CONSUMABLE — installing augs resets faction rep to 0
+   * (`Faction.prestigeAugmentation` converts it to favor), so rep bought and not spent before the next
+   * install is money burned. Capping donations at a fraction of surplus guarantees the remainder is
+   * still there to actually buy the augs the rep just unlocked. Raise toward 1.0 only if cash is
+   * genuinely idle. */
+  donateBudgetFraction: number;
+  /** After every priced aug's rep gap is closed, also buy NeuroFlux Governor rep by donation. NFG is
+   * an infinite ladder (rep req and price both climb ~1.14x per level), so nothing bounds this except
+   * `donateBudgetFraction` — that cap is the only thing stopping it from eating the run's entire cash
+   * pile every cycle. Worth it when the economy has outrun anything else to spend on. */
+  donateNeuroFlux: boolean;
+  /** Aim the action slot at factions that are CLOSE to the donation favor gate, ahead of factions that
+   * merely have augs we want.
+   *
+   * Favor is only ever awarded at an install, which converts a faction's rep into favor and zeroes the rep
+   * (`Faction.prestigeAugmentation`). Crossing the gate — ~462.5k lifetime rep at the standard 150 favor,
+   * see `lib/favor.ts` — permanently converts that faction's rep from a TIME cost into a MONEY cost. So
+   * the last stretch of rep before the gate is the highest-leverage work in the run, and it is worth
+   * grinding ahead of a faction whose augs are nominally more numerous. Off = rank purely by aug count,
+   * the pre-donation behaviour. */
+  favorPush: boolean;
+  /** THE RED PILL SHORTCUT. Once we are in Daedalus, put the action slot on it until its favor clears the
+   * donation gate, ahead of every megacorp.
+   *
+   * The Red Pill costs 2.5M rep and $0, and it is the long pole of clearing a BitNode. Grinding 2.5M rep
+   * by hand is hours. But the donation gate sits at only ~462.5k lifetime rep — so grinding to THAT,
+   * letting an install bank the favor, and then buying the remaining 2.5M for cash is far cheaper in
+   * wall-clock. (At faction_rep x2 in BN4 the donation is ~$1.67t: nothing to a mature gang run.)
+   *
+   * The catch, and why this is build-mode-only: the favor-banking install also resets hacking to 1, and
+   * close mode exists precisely to stop installing so the climb to the daemon requirement can finish. Do
+   * this BEFORE the endgame push or pay for it with an extra full re-climb. */
+  redPillFavorRoute: boolean;
+  /** Combat-gated faction to unlock deliberately. Runs AHEAD of the megacorp path and the Red Pill route,
+   * but only once its non-combat thresholds are met — see `CombatGate`. */
+  combatGate: CombatGate;
   /** Allow the LATE company-rep path: `applyToCompany` -> `workForCompany` to a megacorp faction's
    * invite threshold -> join -> work its rep. Needs high stats to get hired, so it is gated off early
    * and turned on once the economy is mature. */
@@ -57,24 +136,92 @@ export interface RepStrategy {
   companyTargets: string[];
 }
 
-/** When to install queued augs and reset. */
+/**
+ * Port openers / darkweb programs. One idea: below `richCash` money is scarce and the buyer is frugal — it
+ * defers an opener until our hacking level reaches the lowest host that opener unlocks, so a poor run never
+ * sinks $250m into SQLInject it cannot use yet. Above it money is not the constraint, and both brakes are
+ * simply wrong.
+ *
+ * Skipping the LEVEL gate is the bigger half. `nuke` checks port requirements ONLY, never hacking level — so
+ * owning SQLInject at hacking 1 immediately roots all 29 five-port servers for their RAM. An install wipes
+ * every program and purchased server while the GANG earns straight through it, so re-buying the openers the
+ * moment cash recovers is what ends the post-install RAM drought.
+ */
+export interface ProgramStrategy {
+  /** Cash above which the buyer stops being frugal: polls fast AND ignores the hacking-level gate. */
+  richCash: number;
+  /** Re-check this often (ms) while rich and any opener is still missing. Evaluated against LIVE cash every
+   * tick, so the window right after an install — broke at first, rich a minute later — is picked up as soon
+   * as the gang refills the bank instead of waiting out a full slow interval. */
+  richPollMs: number;
+}
+
+/**
+ * When to install queued augs and reset. THREE independent triggers, any of which fires (see
+ * `singularity/install.ts`) — a flat count alone is a poor proxy for "we have got what this cycle can give".
+ *
+ * All counts are of REAL augs: NeuroFlux levels are excluded, because `queueAugmentation` exempts NFG from
+ * its duplicate check and pushes one queue entry PER LEVEL. A raw queue length is therefore mostly NFG in
+ * any run with `neuroFluxDump` on, and "8 queued" can mean zero actual augmentations.
+ */
 export interface InstallStrategy {
-  /** Install automatically when the trigger is met; false => prepare and wait for a manual go. */
+  /** Install automatically when a trigger is met; false => prepare and wait for a manual go. */
   autoInstall: boolean;
-  /** Do not reset for a trivial batch — need at least this many augs queued. */
+  /** TRIGGER 1 (count): reset once this many real augs are queued. The plain "big enough batch" case. */
   minAugsQueued: number;
-  /** ...and at least this much total spent, so a single cheap aug does not trigger a reset. */
+  /** ...and at least this much spent on them since the last install, so a batch of cheap augs does not
+   * trigger a reset on its own. 0 disables the check. Accumulated by augs.js into INSTALL_FILE. */
   minSpend: number;
+  /** TRIGGER 2 (stalled): reset when nothing further is purchasable — every remaining aug is either out
+   * of rep we cannot donate for, or out of money at its escalated price. Waiting longer gains nothing:
+   * `1.9^queued` only resets at an install. */
+  installWhenStalled: boolean;
+  /** TRIGGER 3 (favor): reset when the rep we are holding would carry some faction over the donation
+   * favor gate. That converts the faction's rep from a time cost into a money cost for the rest of the
+   * BitNode, which is worth more than the augs still behind it. See `lib/favor.ts`. */
+  favorInstall: boolean;
+  /** Floor for triggers 2 and 3 — never reset for fewer than this many real augs, however stalled or
+   * favor-rich we are. Trigger 1 ignores this (it is already a count). */
+  minAugsAnyTrigger: number;
 }
 
 /** Node-advance (leaving the BitNode). */
 export interface EndgameStrategy {
-  /** Auto-destroy w0r1d_d43m0n when ready; false => notify and wait (default — leaving is a big call). */
+  /** How to take the final step once the Red Pill is in and hacking has re-climbed to the daemon req.
+   * true  => `destroyW0r1dD43m0n(nextNode)`: auto-jump straight into the next BitNode.
+   * false => (default) root + BACKDOOR w0r1d_d43m0n, which opens the BitVerse and WAITS for you to pick the
+   *          next node — fully unattended up to the choice, but commits to nothing (leaving is a big call). */
   autoDestroy: boolean;
   /** Which BitNode to enter next. */
   nextNode: number;
   /** Hacking level to backdoor w0r1d_d43m0n = 3000 * WorldDaemonDifficulty. BN4 => 9000. */
   hackReq: number;
+  /** Once hacking reaches this FRACTION of hackReq, stop auto-installing — an install resets hacking to
+   * ~1, so past this point the loop holds its augs and climbs the rest of the way uninterrupted (else the
+   * infinite NeuroFlux queue would install forever and the climb would never finish). The key endgame
+   * tuning knob: higher = more multipliers banked before the push (faster final climb, more resets first);
+   * lower = push sooner with weaker mults (slower climb). Tune in-game. */
+  pushFraction: number;
+  /**
+   * ABANDON the push when the projected time to reach `hackReq` exceeds this, and resume installing.
+   *
+   * `pushFraction` alone deadlocks. It stops installs at a fraction of the goal on the assumption that one
+   * uninterrupted climb finishes the job — but if the run's hacking multiplier is too weak, the climb
+   * asymptotes short of the target and the loop holds installs FOREVER, still earning faction rep it now
+   * never spends (rep is wiped by the install that never comes).
+   *
+   * The escape is a measurement, not a guess: sample real hacking XP over a window, compare against
+   * `expForSkill(hackReq, mult)` (see `lib/skills.ts`), and project.
+   *
+   * TUNE THIS LOW. The instinct to be generous here is wrong, because the comparison is not "30 more minutes
+   * versus give up" — it is `exp(target, mult)` versus `exp(target, betterMult)`, and that ratio is
+   * `e^(target/32 * (1/mult - 1/betterMult))`. At target 9000, nudging the hacking multiplier from 8 to 10
+   * divides the XP required by ~1,100x. A push that a decent aug batch cannot finish inside half an hour is
+   * one that banking those augs would finish almost instantly, so waiting it out is nearly always the
+   * expensive choice. The one real risk is abandoning into an install that banks no HACKING multiplier at
+   * all — `install.minAugsAnyTrigger` is the floor that guards against that.
+   */
+  pushAbandonMs: number;
 }
 
 /** Home RAM auto-upgrade — dynamic, so the ceiling scales with the run's stage (= wealth). */
@@ -85,6 +232,12 @@ export interface HomeStrategy {
    * the effective ceiling STAGE-AWARE: early (cash-poor) home stays small so money goes to openers/augs;
    * as the economy grows the doublings become cheap and home rises on its own, up to `ramCap`. */
   costFraction: number;
+  /** Ceiling for the PRE-INSTALL DUMP only (`home.js --dump`), which is a different economic situation
+   * from normal operation. `ramCap` and `costFraction` exist to pace spending while money still has other
+   * uses; at the reset it has none — unspent cash becomes $1,000 — so the dump ignores both and runs to
+   * this ceiling instead. Home RAM and cores are among the very few things that SURVIVE an install, which
+   * is what makes them the right last resort. Set equal to `ramCap` to disable the RAM half of the dump. */
+  dumpRamCap: number;
 }
 
 export interface Strategy {
@@ -93,6 +246,7 @@ export interface Strategy {
   crime: CrimeStrategy;
   augs: AugStrategy;
   rep: RepStrategy;
+  programs: ProgramStrategy;
   install: InstallStrategy;
   endgame: EndgameStrategy;
   home: HomeStrategy;
@@ -118,23 +272,38 @@ const DEFAULT: Omit<Strategy, 'disabledSubsystems'> = {
     neuroFluxDump: true,
   },
   rep: {
-    favorDonateThreshold: 150,
+    donate: true,
+    donateBudgetFraction: 0.5,
+    donateNeuroFlux: true,
+    favorPush: true,
+    redPillFavorRoute: true,
+    combatGate: { faction: '', combat: 0, hacking: 0, money: 0, augs: 0 },
     companyRepPhase: false,
     companyTargets: [],
+  },
+  programs: {
+    richCash: 1e9,
+    richPollMs: 30_000,
   },
   install: {
     autoInstall: true,
     minAugsQueued: 4,
     minSpend: 0,
+    installWhenStalled: true,
+    favorInstall: true,
+    minAugsAnyTrigger: 3,
   },
   endgame: {
     autoDestroy: false,
     nextNode: 1,
     hackReq: 3000, // WorldDaemonDifficulty 1
+    pushFraction: 0.7,
+    pushAbandonMs: 1_800_000, // 30 min projected — beyond that, bank multipliers and re-climb instead
   },
   home: {
-    ramCap: 512, // hard ceiling; the cost gate below is the real limiter until the economy is large
+    ramCap: 512, // hard ceiling for NORMAL operation; the cost gate below is the real limiter until the economy is large
     costFraction: 0.2, // take a doubling only when it's <= 20% of current cash
+    dumpRamCap: 1 << 20, // 1,048,576 GB — effectively unbounded; doubling costs terminate the dump long first
   },
 };
 
@@ -153,7 +322,22 @@ const OVERRIDES: Record<number, StrategyOverride> = {
     rep: {
       companyRepPhase: true,
       companyTargets: ['Bachman & Associates', 'OmniTek Incorporated', 'Clarke Incorporated', 'Four Sigma'],
+      // ILLUMINATI, for QLink — `hacking: 1.75` on top of hacking_speed 2 / chance 2.5 / money 4. The daemon
+      // climb is exponential in `level / mult` (lib/skills.ts), so a 1.75x hacking multiplier is worth more
+      // to reaching 9000 than any amount of extra grinding: it cuts the XP needed by orders of magnitude.
+      // Verified invite gate: 30 augs installed, $150b, hacking 1500, and ALL FOUR combat skills at 1200.
+      // Combat is the only one the hacking loop would never satisfy on its own, hence this step.
+      //
+      // QLink itself then costs 1.875M Illuminati rep and $25 TRILLION — the real barrier, and why the
+      // favor route matters: banking Illuminati favor over several cycles turns that rep into a cash
+      // purchase instead of a grind that has to fit inside one install cycle.
+      combatGate: { faction: 'Illuminati', combat: 1200, hacking: 1500, money: 150e9, augs: 30 },
     },
+    // autoDestroy OFF (default): once the Red Pill is in and hacking re-climbs to 9000, root + BACKDOOR
+    // w0r1d_d43m0n — this opens the BitVerse and STOPS. It does NOT enter a new BitNode; you pick a node
+    // (or not) yourself. That's the wanted behaviour: get the daemon backdoored, don't auto-start a run.
+    // (true would call destroyW0r1dD43m0n to auto-jump — and it needs ~40 GB free home for the 32 GB call,
+    // which doesn't fit next to the controller+daemon on a modest home anyway.)
     endgame: { nextNode: 4, hackReq: 9000 },
     // (home uses the default dynamic gate: rises with wealth up to 512 GB, so it ends the RAM squeeze on
     // its own once the gang is earning, without starving the early cash-poor bootstrap.)
@@ -178,6 +362,7 @@ export function strategyFor(node: number): Strategy {
     crime: mergeSection(DEFAULT.crime, o.crime),
     augs: mergeSection(DEFAULT.augs, o.augs),
     rep: mergeSection(DEFAULT.rep, o.rep),
+    programs: mergeSection(DEFAULT.programs, o.programs),
     install: mergeSection(DEFAULT.install, o.install),
     endgame: mergeSection(DEFAULT.endgame, o.endgame),
     home: mergeSection(DEFAULT.home, o.home),

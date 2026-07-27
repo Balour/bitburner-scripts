@@ -18,7 +18,7 @@ import { VERSION } from '../lib/ports';
  *   --host <h>        only this host
  *   --file <f>        only this .cct file (implies a single host via --host)
  */
-const REV = 'v1';
+const REV = 'v2';
 
 type Dispatch = Record<string, (data: unknown) => unknown>;
 
@@ -26,15 +26,20 @@ const show = (v: unknown): string => (typeof v === 'bigint' ? v.toString() : JSO
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
-  ns.ui.openTail();
   const flags = ns.flags([
     ['dry', false],
     ['host', ''],
     ['file', ''],
+    ['quiet', false],
   ]);
   const dry = flags.dry as boolean;
   const onlyHost = flags.host as string;
   const onlyFile = flags.file as string;
+  const quiet = flags.quiet as boolean;
+  // Automated callers (contracts/loop.js, the pre-install sweep) pass --quiet: no tail window, and the
+  // end-of-run summary stays in the log — except a real solve (cash/rep banked) or a FAIL (a broken
+  // solver), which always surface on the terminal.
+  if (!quiet) ns.ui.openTail();
 
   ns.print(`contracts-solve ${REV} [build ${VERSION}] ${dry ? '(DRY RUN — no attempts)' : ''}`);
 
@@ -55,7 +60,8 @@ export async function main(ns: NS) {
 
   if (jobs.length === 0) {
     ns.print('No contracts found.');
-    ns.tprint('contracts-solve: no .cct files found.');
+    // The common case for a periodic sweep — under --quiet it must not spam the terminal every cycle.
+    if (!quiet) ns.tprint('contracts-solve: no .cct files found.');
     return;
   }
 
@@ -101,13 +107,16 @@ export async function main(ns: NS) {
 
   if (dry) {
     const solvable = jobs.length - unknown;
-    ns.tprint(`contracts-solve DRY: ${solvable}/${jobs.length} solvable, ${unknown} without a solver.`);
+    const line = `contracts-solve DRY: ${solvable}/${jobs.length} solvable, ${unknown} without a solver.`;
+    if (quiet) ns.print(line);
+    else ns.tprint(line);
     return;
   }
 
-  ns.tprint(
-    `contracts-solve: ${solved} solved, ${failed} failed, ${unknown} no-solver, of ${jobs.length} contract(s).`,
-  );
+  const summary = `contracts-solve: ${solved} solved, ${failed} failed, ${unknown} no-solver, of ${jobs.length} contract(s).`;
+  // Under --quiet, an uneventful sweep stays off the terminal; a real solve or a FAIL always surfaces.
+  if (!quiet || solved > 0 || failed > 0) ns.tprint(summary);
+  else ns.print(summary);
   for (const r of rewards) ns.tprint(`  reward: ${r}`);
   if (failed > 0) {
     ns.tprint(`  WARNING: ${failed} attempt(s) failed — run \`contracts/run.js test\` to find the broken solver.`);

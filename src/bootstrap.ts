@@ -21,7 +21,8 @@ import { VERSION, BN_DISABLE } from './lib/ports';
  *
  * Each stack entry auto-gets TWO flags: --no-<key> to force it off and --<key> to force it on.
  * Full set: --no-gang/--gang, --no-daemon/--daemon, --no-monitor/--monitor, --no-auto-buy/--auto-buy,
- * --no-share/--share, --no-hacknet/--hacknet. Flags are PER-INVOCATION — nothing is persisted. "Enable"
+ * --no-share/--share, --no-contracts/--contracts, --no-hacknet/--hacknet. Flags are PER-INVOCATION —
+ * nothing is persisted. "Enable"
  * is the absence of a flag, unless a per-BitNode default says otherwise (see below).
  *
  * lib/ports BN_DISABLE is a per-BitNode default opt-out table: in a node where a subsystem isn't worth
@@ -39,7 +40,7 @@ import { VERSION, BN_DISABLE } from './lib/ports';
  * nothing would launch the very thing you meant to suppress.
  */
 /** This script's own revision — bump when THIS script's behaviour changes. */
-const REV = 'v6';
+const REV = 'v7';
 
 /** `key` names the --no-<key> flag. It is a string LITERAL, not an identifier, which is what keeps
  * it free: the static RAM parser harvests bare identifiers, so a variable named `share` would bill
@@ -58,6 +59,14 @@ const STACK = [
   { key: 'monitor', file: '/monitor.js', ram: 2.4, why: 'dashboard' },
   { key: 'auto-buy', file: '/auto-buy.js', ram: 6.05, why: 'compound income into pool RAM' },
   { key: 'share', file: '/share.js', ram: 3.85, why: 'reputation from idle RAM' },
+  // Low priority: needs only ~3 GB on home to run — it places the 24 GB solver on a pool host at
+  // runtime and self-throttles (run.js ERROR-skips) until one is free. Works in every BitNode.
+  {
+    key: 'contracts',
+    file: '/contracts/loop.js',
+    ram: 3.0,
+    why: 'periodically auto-solve coding contracts for cash + rep',
+  },
   // Lowest priority: self-gates on a cash floor, so it only spends surplus the rest can't use.
   { key: 'hacknet', file: '/hacknet.js', ram: 7.2, why: 'mop surplus cash into hacknet (bridge income)' },
 ];

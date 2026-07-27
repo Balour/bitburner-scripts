@@ -44,7 +44,11 @@ export interface Sing {
   joinFaction(faction: string): boolean;
   getFactionRep(faction: string): number;
   getFactionFavor(faction: string): number;
+  /** Non-empty only if the faction offers work — which is also what makes it donatable. */
+  getFactionWorkTypes(faction: string): string[];
   workForFaction(faction: string, type: string, focus?: boolean): boolean;
+  /** Rejects (returns false, no money moved) if: not a member, it is your GANG's faction, the faction
+   * offers no work types, amount <= 0, cash is short, or favor < `ns.getFavorToDonate()`. */
   donateToFaction(faction: string, amount: number): boolean;
   applyToCompany(company: string, field: string): string | null;
   workForCompany(company: string, focus?: boolean): boolean;
@@ -58,9 +62,14 @@ export interface Sing {
   purchaseAugmentation(faction: string, aug: string): boolean;
   getOwnedAugmentations(purchased?: boolean): string[];
   installAugmentations(cbScript?: string): void;
-  // home upgrades (instant)
+  // home upgrades (instant). Both SURVIVE an augment install — `prestigeHomeComputer` clears programs,
+  // network links, ramUsed and messages, and never touches `maxRam` or `cpuCores`. They reset only on
+  // entering a new BitNode. Cores cap at 8; both are disabled by `bitNodeOptions.restrictHomePCUpgrade`,
+  // which surfaces only as a `false` return, so always break on false rather than assuming affordability.
   upgradeHomeRam(): boolean;
   getUpgradeHomeRamCost(): number;
+  upgradeHomeCores(): boolean;
+  getUpgradeHomeCoresCost(): number;
   // endgame
   destroyW0r1dD43m0n(nextBN: number, cbScript?: string): void;
 }
@@ -68,6 +77,26 @@ export interface Sing {
 /** The Singularity namespace, typed. ALWAYS index it with a string literal at the call site. */
 export function sing(ns: NS): Sing {
   return (ns as unknown as Record<string, unknown>)['singularity'] as Sing;
+}
+
+/**
+ * Rep bought per dollar donated, MEASURED rather than derived. The game's formula
+ * (`src/Faction/formulas/donation.ts`) is
+ *     rep = amount / 1e6 * player.mults.faction_rep * BitNodeMultipliers.FactionWorkRepGain
+ * and that last term is unreadable without SF-5 (`getBitNodeMultipliers`). Rather than hardcode a node's
+ * value — 0.75 in BN4, 0.5 in BN2, 0.2 in BN14 — donate `probe` and read the rep delta. There is no
+ * per-faction term, so ONE probe calibrates every faction, and it stays correct across a mid-run
+ * faction_rep augment install.
+ *
+ * `faction` must already be donatable (member, favor gate met, offers work, not your gang's) — this does
+ * not check, it just returns 0 if the donation is refused. Returns 0 on any failure, meaning "unusable".
+ */
+export function donationRate(ns: NS, s: Sing, faction: string, probe = 1e6): number {
+  if (ns.getServerMoneyAvailable('home') < probe) return 0;
+  const before = s['getFactionRep'](faction);
+  if (!s['donateToFaction'](faction, probe)) return 0;
+  const delta = s['getFactionRep'](faction) - before;
+  return delta > 0 ? delta / probe : 0;
 }
 
 /**

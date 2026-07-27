@@ -289,7 +289,7 @@ function stepXp(ns: NS, t: Target, slots: Slot[], job: Job, copied: Set<string>,
 }
 
 /** This script's own revision — bump when THIS script's behaviour changes. */
-const REV = 'v4';
+const REV = 'v5';
 
 export async function main(ns: NS) {
   ns.disableLog('ALL');
@@ -388,8 +388,11 @@ export async function main(ns: NS) {
       anchorMoney = now;
       const poolMax = hosts.reduce((sum, h) => sum + ns.getServerMaxRam(h), 0);
       const poolUsed = Math.max(0, poolMax - poolFree(slots));
+      // `phases['weaken']` is BRACKETED on purpose: a dot read `phases.weaken` collides with ns.weaken
+      // in the static RAM parser's flat name table and silently bills 0.15 GB (same reason 'xp-w' below
+      // is bracketed). Do not "tidy" it back to dot access — run /probe/ram/budget.js would jump to 5.10.
       ns.print(
-        `t${tick}: ${phases.maintain} maintain, ${phases.prep} prep, ${phases.weaken} weaken, ${phases.drain} drain, ` +
+        `t${tick}: ${phases.maintain} maintain, ${phases.prep} prep, ${phases['weaken']} weaken, ${phases.drain} drain, ` +
           `${phases.xp + phases['xp-w']} xp, ${phases.drained + phases.slow + phases.idle} idle | ` +
           `pool ${ns.format.ram(poolUsed)}/${ns.format.ram(poolMax)} | net ${rate >= 0 ? '+' : ''}$${ns.format.number(rate)}/sec`,
       );

@@ -8,7 +8,7 @@
  * unrelated file changes. Each script carries its own `REV` for that, printed as
  * `daemon v3 [build v17]`. Bump a script's REV when THAT script's behaviour changes; bump VERSION
  * on any change at all. */
-export const VERSION = 'v68';
+export const VERSION = 'v84';
 
 /** RAM to keep free on `home` for the controllers' TRANSIENT execs. Workers/share size themselves
  * as `maxRam - used - HOME_RESERVE`, and `used` already covers the resident controllers — so this
@@ -56,6 +56,25 @@ export const TARGETS_FILE = '/data/targets.json';
 
 /** The Singularity controller's progress record, mirrored to disk so it survives restarts. */
 export const SING_FILE = '/data/singularity.json';
+
+/** The endgame close-out record, written by redpill.js/endgame.js and read (free) by the controller so it
+ * knows whether the Red Pill is installed and how far the exit has progressed. Survives the Red-Pill install
+ * (home files persist across augment installs), which is what lets the controller re-enter close mode after
+ * the reset instead of falling back to building. Shape: `{ redPillInstalled, inDaedalus, hack, phase, detail }`.
+ * `phase` drives the controller: 'grind'|'reclimb'|'installing'|'await-daedalus' (redpill.js) → 'await-root'|
+ * 'bitverse' (endgame.js). Validate every field against a fail-SAFE default (no Red Pill, keep building). */
+export const ENDGAME_FILE = '/data/endgame.json';
+
+/** augs.js publishes what it learned about the INSTALL decision here; install.js reads it for free.
+ * augs.js already pays ~30 GB to enumerate every faction's augs, prices and rep — install.js would have
+ * to pay all of it again just to ask "is there anything left to buy?". Shape:
+ * `{ augReset, stalled, favorCrossings[], spent, detail }`.
+ *
+ * `augReset` keys the record to the current install cycle (`getResetInfo().lastAugReset`), so a record
+ * written before the last install is discarded rather than re-triggering one. Validate every field
+ * against a fail-SAFE default: unreadable, half-written or stale must read as DO NOT INSTALL — an
+ * install is destructive and irreversible. */
+export const INSTALL_FILE = '/data/install.json';
 
 /** Where contracts/find.js records what it located. */
 export const CONTRACTS_FILE = '/data/contracts.json';

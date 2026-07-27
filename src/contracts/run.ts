@@ -14,7 +14,7 @@ import { VERSION } from '../lib/ports';
  *
  * Any flags after the subcommand are passed straight through to the launched script.
  */
-const REV = 'v1';
+const REV = 'v2';
 
 const DEPS = ['/lib/contracts.js', '/lib/net.js', '/lib/ports.js'];
 
@@ -25,6 +25,14 @@ export async function main(ns: NS) {
     return;
   }
   const passthrough = ns.args.slice(1);
+  // Our own flags (parsed by plain string match — 0 GB, no ns.flags). --wait blocks until the launched
+  // script actually exits, so a caller that waitPids US transitively waits through the whole remote run.
+  // --quiet suppresses tail windows + routine terminal output here AND downstream (forwarded to solve).
+  const wait = passthrough.includes('--wait');
+  const quiet = passthrough.includes('--quiet');
+  // solve/test parse args with a non-permissive ns.flags, which throws on an undeclared flag. --wait is
+  // ours (consumed here), so strip it before forwarding; --quiet IS declared downstream, so keep it.
+  const forward = passthrough.filter((a) => a !== '--wait');
   const target = `/contracts/${sub}.js`;
   const need = ns.getScriptRam(target, 'home');
 
@@ -40,20 +48,33 @@ export async function main(ns: NS) {
   }
 
   if (bestFree < need) {
-    ns.tprint(
-      `ERROR ${target} needs ${need.toFixed(2)} GB; the best rooted host (${best}) has only ` +
-        `${bestFree.toFixed(2)} GB free. Buy/upgrade a server, or free up RAM, then retry.`,
-    );
+    const msg =
+      `${target} needs ${need.toFixed(2)} GB; the best rooted host (${best}) has only ` +
+      `${bestFree.toFixed(2)} GB free. Buy/upgrade a server, or free up RAM, then retry.`;
+    // Expected/routine when the pool is small (early game, saturated pool). An automated --quiet caller
+    // retries on a timer, so don't spam the terminal — its own log carries the skip.
+    if (quiet) ns.print(`skip: ${msg}`);
+    else ns.tprint(`ERROR ${msg}`);
     return;
   }
 
   ns.scp([target, ...DEPS], best);
-  const pid = ns.exec(target, best, 1, ...passthrough);
+  const pid = ns.exec(target, best, 1, ...forward);
   if (pid === 0) {
     ns.tprint(`ERROR failed to exec ${target} on ${best} (${bestFree.toFixed(2)} GB free, needs ${need.toFixed(2)}).`);
     return;
   }
 
-  ns.ui.openTail(pid);
-  ns.tprint(`run ${REV} [build ${VERSION}]: launched ${target} on ${best} (pid ${pid}). Watch its tail for results.`);
+  if (!quiet) ns.ui.openTail(pid);
+  const launched = `run ${REV} [build ${VERSION}]: launched ${target} on ${best} (pid ${pid}).`;
+  if (quiet) ns.print(launched);
+  else ns.tprint(`${launched} Watch its tail for results.`);
+
+  // --wait: block until the launched script exits, so the pre-install sweep finishes BEFORE the reset.
+  if (wait) {
+    while (ns.isRunning(pid)) await ns.sleep(500);
+    const done = `run ${REV}: ${target} on ${best} (pid ${pid}) finished.`;
+    if (quiet) ns.print(done);
+    else ns.tprint(done);
+  }
 }

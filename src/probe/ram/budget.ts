@@ -26,7 +26,7 @@ const BUDGET = [
   [
     '/daemon.js',
     '4.95',
-    'net 0.25 + exec 1.3 + scp 0.6 + killall 0.5 + isRunning 0.1 + fileExists 0.1 + getHackTime 0.05 + hackingLevel + 4 scalars',
+    "net 0.25 + exec 1.3 + scp 0.6 + killall 0.5 + isRunning 0.1 + fileExists 0.1 + getHackTime 0.05 + hackingLevel + 4 scalars; phases['weaken'] bracketed to dodge ns.weaken 0.15",
   ],
   ['/monitor.js', '2.40', 'net 0.25 + 4 scalars + maxRam/usedRam 0.1'],
   [
@@ -65,6 +65,7 @@ const BUDGET = [
   ['/share.js', '3.85', 'net 0.25 + exec 1.3 + scp 0.6 + maxRam/usedRam 0.1'],
   ['/hacknet.js', '7.20', 'money 0.1 + 11 distinct hacknet.* at 0.5 each = 5.5 (NOT 0 GB)'],
   ['/workers/share.js', '4.00', 'base + share 2.4 — one-shot, re-launched by share.js'],
+  ['/contracts/loop.js', '3.00', 'base 1.6 + exec 1.3 + isRunning 0.1 — resident periodic solver'],
   ['/contracts/catalog.js', '1.60', 'getContractTypes is 0 GB'],
   // Imports only `crawl`, so it pays scan 0.2 but NOT `rooted`'s hasRootAccess.
   ['/contracts/find.js', '2.00', 'crawl only 0.2 + ls 0.2 — named imports charge per symbol'],

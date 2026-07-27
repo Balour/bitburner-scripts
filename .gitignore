@@ -15,6 +15,10 @@
 # Netscript definitions is pulled automatically
 NetscriptDefinitions.d.ts
 
+# Runtime state the scripts write in-game (see lib/ports.ts: TARGETS_FILE, SING_FILE,
+# ENDGAME_FILE, INSTALL_FILE, CONTRACTS_FILE) plus any run logs. Generated, never source.
+/data/
+
 # https://github.com/github/gitignore/blob/main/Node.gitignore
 
 # Logs
