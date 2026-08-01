@@ -1,5 +1,5 @@
 import type { NS } from '@ns';
-import { strategyFor } from '../lib/strategy';
+import { liveStrategy } from '../lib/bitnode';
 import { repToReachFavor } from '../lib/favor';
 import { sing, reserveOk } from './api';
 
@@ -44,7 +44,7 @@ export async function main(ns: NS) {
   // ~28.9 GB: v5's 27.6 + getFactionFavor 1 + getFavorToDonate 0.1 + the gate's money 0.1 / hackingLevel 0.05.
   if (!reserveOk(ns, 40, 29)) return;
   const s = sing(ns);
-  const strat = strategyFor(ns.getResetInfo().currentNode);
+  const strat = liveStrategy(ns, ns.getResetInfo().currentNode);
   const owned = new Set(s['getOwnedAugmentations'](true));
   const inFactions = new Set<string>(ns.getPlayer().factions);
   const gangFaction = ns.gang.inGang() ? ns.gang.getGangInformation().faction : '';

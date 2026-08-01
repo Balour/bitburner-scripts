@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { VERSION, PORT_SING_STATUS, PORT_SING_PAUSE, SING_FILE, ENDGAME_FILE, INSTALL_FILE } from './lib/ports';
-import { strategyFor } from './lib/strategy';
+import { liveStrategy } from './lib/bitnode';
 import { expForSkill } from './lib/skills';
 import { sing, reserve, isBackdoored } from './singularity/api';
 import { crimeStep } from './singularity/crime';
@@ -162,7 +162,7 @@ export async function main(ns: NS) {
     ns.tprint('singularity: no SF-4 and not in BN4 — the Singularity API is unavailable. Nothing to do.');
     return;
   }
-  const strat = strategyFor(node);
+  const strat = liveStrategy(ns, node);
 
   // Upgrade home FIRST, while it still has room — home.js needs free RAM to run, and once we reserve ours
   // there is none. This is the only reliable window to grow home (buys space for found.js, the gang, and

@@ -13,6 +13,9 @@
  * OVERRIDES — do not fork the controllers.
  */
 import { BN_DISABLE } from './ports';
+// TYPE-ONLY, and it must stay that way: the transform erases it, so `lib/bitnode`'s `ns.read` never
+// enters this module's dependency set and importing strategy.ts stays 0 GB.
+import type { BitNodeMults } from './bitnode';
 
 /** Which augment family the buyer weights first. Phase-dependent in practice: a gang node
  * grinds combat early (faster homicide) then pivots to hacking (level -> daemon requirement). */
@@ -417,23 +420,60 @@ const OVERRIDES: Record<number, StrategyOverride> = {
   },
 };
 
-/** Shallow-merge one override section onto its default. Sections are flat, so this is enough. */
+/** Shallow-merge one override section onto its default. Sections are flat, so this is enough.
+ *
+ * NOTE it returns `base` ITSELF when there is no override — the module-level DEFAULT object, shared by
+ * every caller. Never mutate a merged section; build a new one. */
 function mergeSection<T>(base: T, over: Partial<T> | undefined): T {
   return over ? { ...base, ...over } : base;
 }
 
-/** The active strategy for `node`. PURE (0 GB): pass `ns.getResetInfo().currentNode`. The disabled-subsystem
- * list is the union of BN_DISABLE's global key 0 and this node, matching bootstrap's existing resolution. */
-export function strategyFor(node: number): Strategy {
+/** `w0r1dd43m0n`'s hacking requirement before the node's own scaling. From `Server/data/servers.ts`
+ * (`requiredHackingSkill: 3000`), multiplied by `BitNodeMultipliers.WorldDaemonDifficulty`. */
+const WORLD_DAEMON_BASE_REQ = 3000;
+
+/**
+ * The active strategy for `node`. PURE (0 GB) — no NS calls and no NS-named identifiers, which is what
+ * lets all eight callers import it for nothing. Pass `ns.getResetInfo().currentNode`.
+ *
+ * `mults` is the LIVE BitNode multipliers, optional, injected by the caller — read them free with
+ * `readBitNodeMults` from `lib/bitnode` (`ns.getBitNodeMultipliers` is 4 GB and needs SF-5, so it is
+ * paid once by `probe/bitnode.js` and shared through a file). Do NOT reach for them inside this
+ * function; that would cost every importer 4 GB and break the purity the whole design rests on.
+ *
+ * Precedence is DEFAULT -> OVERRIDES -> live multipliers, and that last step deliberately outranks the
+ * hand-written config: `hackReq` is a FACT about the node, not a preference, so measured beats
+ * remembered. The hardcodes stay as the fail-safe for the window before the probe has run in a fresh
+ * BitNode, and for a run without SF-5. Omitting `mults` reproduces the old behaviour exactly.
+ */
+export function strategyFor(node: number, mults?: BitNodeMults): Strategy {
   const o = OVERRIDES[node] ?? {};
+  let disabledSubsystems = [...(BN_DISABLE[0] ?? []), ...(BN_DISABLE[node] ?? [])];
+  let endgame = mergeSection(DEFAULT.endgame, o.endgame);
+
+  if (mults) {
+    // Derived, not configured. BN1 1.0 -> 3000, BN5 1.5 -> 4500, BN4 3 -> 9000, BN2 5 -> 15000.
+    if (Number.isFinite(mults.WorldDaemonDifficulty) && mults.WorldDaemonDifficulty > 0) {
+      endgame = { ...endgame, hackReq: WORLD_DAEMON_BASE_REQ * mults.WorldDaemonDifficulty };
+    }
+    // Purchased servers are not merely expensive here, they are IMPOSSIBLE (`ns.cloud.purchaseServer`
+    // can never succeed), so auto-buy could only poll forever. BN9 is the node this exists for. Kept to
+    // this one rule on purpose: it is a hard capability fact. Judgement calls like "is hacknet worth its
+    // RAM at 20% production" stay in BN_DISABLE where a human decided them — and a `--<key>` flag still
+    // overrides either, so nothing here can lock a subsystem off against your wishes.
+    if (mults.CloudServerLimit === 0 && !disabledSubsystems.includes('auto-buy')) {
+      disabledSubsystems = [...disabledSubsystems, 'auto-buy'];
+    }
+  }
+
   return {
-    disabledSubsystems: [...(BN_DISABLE[0] ?? []), ...(BN_DISABLE[node] ?? [])],
+    disabledSubsystems,
     crime: mergeSection(DEFAULT.crime, o.crime),
     augs: mergeSection(DEFAULT.augs, o.augs),
     rep: mergeSection(DEFAULT.rep, o.rep),
     programs: mergeSection(DEFAULT.programs, o.programs),
     install: mergeSection(DEFAULT.install, o.install),
-    endgame: mergeSection(DEFAULT.endgame, o.endgame),
+    endgame,
     home: mergeSection(DEFAULT.home, o.home),
   };
 }

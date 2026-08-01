@@ -8,7 +8,7 @@
  * unrelated file changes. Each script carries its own `REV` for that, printed as
  * `daemon v3 [build v17]`. Bump a script's REV when THAT script's behaviour changes; bump VERSION
  * on any change at all. */
-export const VERSION = 'v91';
+export const VERSION = 'v92';
 
 /** RAM to keep free on `home` for the controllers' TRANSIENT execs. Workers/share size themselves
  * as `maxRam - used - HOME_RESERVE`, and `used` already covers the resident controllers — so this
@@ -83,6 +83,16 @@ export const INSTALL_FILE = '/data/install.json';
 /** Where contracts/find.js records what it located. */
 export const CONTRACTS_FILE = '/data/contracts.json';
 
+/** probe/bitnode.js's record of THIS node's live multipliers, so everything else reads them for free.
+ * `getBitNodeMultipliers` is 4 GB and needs SF-5 — far too expensive for the eight scripts that call
+ * `strategyFor`, and it throws outright without the Source-File. One script pays, everyone reads.
+ *
+ * Shape: `{ node, ok, mults }`. `node` keys it to the BitNode (multipliers are constant within one, so
+ * this never needs refreshing until we leave); `ok` false means the call was unavailable, which is a
+ * RECORD, not a gap — it stops bootstrap re-running a 4 GB probe every reset to rediscover that we lack
+ * SF-5. Fail-safe on a bad parse is `undefined`, i.e. fall back to the hardcoded OVERRIDES. */
+export const BITNODE_FILE = '/data/bitnode.json';
+
 /** Fraction of a server's CURRENT money one batch's hack steals. */
 export const HACK_FRACTION = 0.25;
 
@@ -102,10 +112,12 @@ export const BN_DISABLE: Record<number, string[]> = {
   // daemon AND these during the karma grind. Nothing here is about BN1 being unfavourable; it penalizes
   // nothing at all.
   //
-  // hacknet is the standout re-enable, and unlike BN5 it is not a compromise: BN1's HacknetNodeMoney is
-  // DEFAULT (1.0), so it runs at full production — five times BN5's rate and twenty times BN4's.
-  // `run /bootstrap.js --hacknet` once home clears ~48 GB.
-  1: ['hacknet', 'monitor', 'share', 'auto-buy'],
+  // hacknet is deliberately NOT in this list, unlike BN4/BN5: BN1's HacknetNodeMoney is DEFAULT (1.0), so
+  // it runs at full production — five times BN5's rate, twenty times BN4's — and is worth its 7.2 GB the
+  // moment home can spare them. The polarity is flipped here on purpose: enabled by default, and the
+  // FIRST bootstrap of a run (32 GB home, controller + daemon) is the one call that opts out, with
+  // `run /bootstrap.js --no-hacknet`. Re-run plain `/bootstrap.js` once home grows and it joins.
+  1: ['monitor', 'share', 'auto-buy'],
   // BN4: hacknet ~5% of normal. monitor/share/auto-buy are held off during the karma grind so the ~26 GB
   // Singularity controller fits a 32 GB home alongside the daemon (it runs on home, where HOME_RESERVE
   // protects it from the daemon's pool workers — running it on a pool host lets the daemon steal its RAM).

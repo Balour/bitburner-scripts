@@ -1,5 +1,5 @@
 import type { NS } from '@ns';
-import { strategyFor } from '../lib/strategy';
+import { liveStrategy } from '../lib/bitnode';
 import { sing, reserveOk } from './api';
 
 /**
@@ -38,7 +38,7 @@ export async function main(ns: NS) {
   // +4.5 GB over v1 for the cores path: getUpgradeHomeCoresCost 1.5 + upgradeHomeCores 3.
   if (!reserveOk(ns, 16, 12)) return;
   const s = sing(ns);
-  const strat = strategyFor(ns.getResetInfo().currentNode);
+  const strat = liveStrategy(ns, ns.getResetInfo().currentNode);
   const money = () => ns.getServerMoneyAvailable('home');
   const reserveCash = dump ? 0 : strat.augs.cashReserve;
 

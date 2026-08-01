@@ -83,10 +83,31 @@ otherwise die on entering a BitNode, `rank-formulas.ts` went from dead code cost
 permanent path from second zero, with no post-install gap. SF-5 also grants `ns.getBitNodeMultipliers()`
 and permanent Intelligence, and +14% hacking multipliers at level 3.
 
-> `getBitNodeMultipliers()` is now available and still UNUSED. The intended payoff is deriving
-> `lib/strategy.ts` from live multipliers instead of hardcoding `OVERRIDES` — `hackReq` becomes
-> `3000 * WorldDaemonDifficulty`, and `BN_DISABLE` follows from `CloudServerLimit` / `HacknetNodeMoney`.
-> Keep `strategyFor()` PURE (0 GB): inject the multipliers from a paying caller, never read them inside it.
+### Strategy is measured, not remembered
+
+`getBitNodeMultipliers()` is 4 GB and needs SF-5, so **`probe/bitnode.js` is the only script that calls
+it.** It writes `/data/bitnode.json`; everything else reads that for 0 GB via `lib/bitnode.ts`. bootstrap
+runs the probe automatically when no record exists for the current node — once per BitNode, since
+multipliers are constant within one.
+
+**Call `liveStrategy(ns, node)`, never `strategyFor(node)` directly.** The bare form silently returns the
+hardcoded `hackReq` and the caller cannot tell. `strategyFor` keeps its optional-multipliers signature
+only so it can stay **pure (0 GB)** — no `ns`, no NS-named identifiers — which is what lets all eight
+callers import it for free. `lib/strategy.ts` imports `BitNodeMults` **type-only**; making that a value
+import would drag `ns.read` into every importer.
+
+Precedence is `DEFAULT` → `OVERRIDES` → live multipliers. The live layer deliberately outranks the
+hand-written config for `hackReq`, because that is a *fact* about the node rather than a preference. The
+hardcodes remain the fail-safe for the window before the probe runs and for a run without SF-5, so
+omitting the multipliers reproduces the old behaviour exactly.
+
+Only two things are derived, and both are hard capability facts: `hackReq = 3000 × WorldDaemonDifficulty`,
+and `CloudServerLimit === 0` force-disables `auto-buy` (purchased servers are impossible in BN9, so it
+could only poll forever). Judgement calls — "is hacknet worth 7.2 GB at 20% production" — stay in
+`BN_DISABLE` where a human decided them, and a `--<key>` flag still overrides either.
+
+`run /probe/bitnode.js 10` prices **any** node without entering it. Prefer it over the wiki or this doc
+when planning a target.
 
 **Next target: BN1 "Source Genesis", two clears (SF-1.2, then SF-1.3).** The cheapest runs available —
 `WorldDaemonDifficulty 1` → hacking **3000**, and the only node whose multiplier block is entirely

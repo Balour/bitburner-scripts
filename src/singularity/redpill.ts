@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { sing, reserveOk, donationRate } from './api';
-import { strategyFor } from '../lib/strategy';
+import { liveStrategy } from '../lib/bitnode';
 import { repToReachFavor } from '../lib/favor';
 import { ENDGAME_FILE } from '../lib/ports';
 
@@ -114,7 +114,7 @@ export async function main(ns: NS) {
   // hacking + field work (FactionInfo), so it is donatable; it can never be a gang faction, so no gang
   // check is needed here. `repwork.ts` gets the favor there during BUILD mode via
   // `strat.rep.redPillFavorRoute`; if it did not finish in time, the favor-bank branch below does it here.
-  const strat = strategyFor(ns.getResetInfo().currentNode);
+  const strat = liveStrategy(ns, ns.getResetInfo().currentNode);
   if (strat.rep.donate && s['getFactionFavor'](DAEDALUS) >= ns.getFavorToDonate()) {
     const rate = donationRate(ns, s, DAEDALUS);
     if (rate > 0) {

@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { pathTo } from '../lib/net';
-import { strategyFor } from '../lib/strategy';
+import { liveStrategy } from '../lib/bitnode';
 import { sing, reserveOk, isBackdoored } from './api';
 import { ENDGAME_FILE } from '../lib/ports';
 
@@ -38,7 +38,7 @@ function navigate(ns: NS, s: ReturnType<typeof sing>, dest: string): boolean {
 
 export async function main(ns: NS) {
   const info = ns.getResetInfo();
-  const strat = strategyFor(info.currentNode);
+  const strat = liveStrategy(ns, info.currentNode);
   const auto = strat.endgame.autoDestroy;
 
   // ns.write is free (0 GB), so this is defined before the reservation and usable even when it fails.

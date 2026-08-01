@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { crawl } from '../lib/net';
-import { strategyFor } from '../lib/strategy';
+import { liveStrategy } from '../lib/bitnode';
 import { sing, reserveOk } from './api';
 
 /**
@@ -45,7 +45,7 @@ export async function main(ns: NS) {
   // the host's RAM.
   if (!reserveOk(ns, 16, 11)) return;
   const s = sing(ns);
-  const strat = strategyFor(ns.getResetInfo().currentNode);
+  const strat = liveStrategy(ns, ns.getResetInfo().currentNode);
   /** Money has stopped being the constraint — buy openers on sight, ignoring the hacking-level gate. */
   const rich = ns.getServerMoneyAvailable('home') >= strat.programs.richCash;
 

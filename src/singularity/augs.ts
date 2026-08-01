@@ -1,5 +1,5 @@
 import type { NS } from '@ns';
-import { strategyFor } from '../lib/strategy';
+import { liveStrategy } from '../lib/bitnode';
 import { repToReachFavor } from '../lib/favor';
 import { INSTALL_FILE } from '../lib/ports';
 import { sing, reserve, reserveOk, donationRate } from './api';
@@ -93,7 +93,7 @@ export async function main(ns: NS) {
   if (!reserveOk(ns, BUY_GB + 10, BUY_GB)) return;
   const s = sing(ns);
   const info = ns.getResetInfo();
-  const strat = strategyFor(info.currentNode);
+  const strat = liveStrategy(ns, info.currentNode);
   const money = () => ns.getServerMoneyAvailable('home');
   /** Liquidity to protect — nothing, on the final pass. */
   const reserveCash = final ? 0 : strat.augs.cashReserve;

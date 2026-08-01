@@ -1,5 +1,9 @@
 import type { NS } from '@ns';
-import { VERSION, BN_DISABLE } from './lib/ports';
+import { VERSION } from './lib/ports';
+// Named imports are charged PER SYMBOL, and both of these are 0 GB: strategyFor is pure and the bitnode
+// readers only touch ns.read. BN_DISABLE is no longer imported directly — strategyFor owns the
+// resolution now, so there is one place that decides what a node runs.
+import { liveStrategy, readBitNodeRecord } from './lib/bitnode';
 
 /**
  * ~3.0 GB. Run once after any reset. RAM-adaptive: launches only the scripts that
@@ -40,7 +44,7 @@ import { VERSION, BN_DISABLE } from './lib/ports';
  * nothing would launch the very thing you meant to suppress.
  */
 /** This script's own revision — bump when THIS script's behaviour changes. */
-const REV = 'v7';
+const REV = 'v8';
 
 /** `key` names the --no-<key> flag. It is a string LITERAL, not an identifier, which is what keeps
  * it free: the static RAM parser harvests bare identifiers, so a variable named `share` would bill
@@ -98,10 +102,26 @@ export async function main(ns: NS) {
   ]);
   const dry = flags.dry as boolean;
 
-  // Per-BitNode default opt-outs (union of the global key 0 and this node). getResetInfo is 1 GB —
-  // the only RAM this launcher spends beyond the base, trivial on a run-once-and-exit home script.
+  // Per-BitNode default opt-outs. getResetInfo is 1 GB — the only RAM this launcher spends beyond the
+  // base and the exec it already needs, trivial on a run-once-and-exit home script.
   const bn = ns.getResetInfo().currentNode;
-  const defaultOff = new Set<string>([...(BN_DISABLE[0] ?? []), ...(BN_DISABLE[bn] ?? [])]);
+
+  // Make sure this node's multiplier record exists before resolving the strategy. Entering a BitNode
+  // invalidates it (the record is keyed by node), and bootstrap is the one thing guaranteed to run right
+  // after that — so this is where it belongs. One 4 GB probe per run, then never again: an `ok: false`
+  // record (no SF-5) is still a record, so this does not retry on every reset.
+  //
+  // Deliberately BEFORE the strategy is resolved and blocking on it: `strategyFor` needs the multipliers
+  // to derive `hackReq`, and a stack launched against a stale hackReq would drive the whole close-out
+  // off the wrong number.
+  if (!readBitNodeRecord(ns, bn)) {
+    const pid = ns.exec('/probe/bitnode.js', 'home');
+    if (pid === 0) ns.tprint('WARN bootstrap: could not run /probe/bitnode.js — using hardcoded OVERRIDES.');
+    else while (ns.isRunning(pid)) await ns.sleep(200);
+  }
+  // undefined here is FINE and expected on a run without SF-5: strategyFor falls back to OVERRIDES.
+  const strat = liveStrategy(ns, bn);
+  const defaultOff = new Set<string>(strat.disabledSubsystems);
 
   ns.tprint('');
   ns.tprint(

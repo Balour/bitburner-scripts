@@ -1,5 +1,5 @@
 import type { NS } from '@ns';
-import { strategyFor } from '../lib/strategy';
+import { liveStrategy } from '../lib/bitnode';
 import { INSTALL_FILE } from '../lib/ports';
 import { sing, reserveOk } from './api';
 
@@ -91,7 +91,7 @@ export async function main(ns: NS) {
   if (!reserveOk(ns, 16, 12)) return;
   const s = sing(ns);
   const info = ns.getResetInfo();
-  const strat = strategyFor(info.currentNode);
+  const strat = liveStrategy(ns, info.currentNode);
 
   // The queue is the tail of owned(true) past owned(false) — installed augs are pushed first.
   const installed = s['getOwnedAugmentations'](false);
