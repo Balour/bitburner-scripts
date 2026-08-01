@@ -110,7 +110,13 @@ export interface RepStrategy {
    * see `lib/favor.ts` — permanently converts that faction's rep from a TIME cost into a MONEY cost. So
    * the last stretch of rep before the gate is the highest-leverage work in the run, and it is worth
    * grinding ahead of a faction whose augs are nominally more numerous. Off = rank purely by aug count,
-   * the pre-donation behaviour. */
+   * the pre-donation behaviour.
+   *
+   * NOT unconditional, and this is the part that is easy to get wrong: `repwork.ts` only pushes a faction
+   * whose priciest GATED aug is further away than the gate itself. Where the augs are nearer, grinding
+   * them directly is cheaper and also EMPTIES the faction, so donation access there would buy nothing.
+   * Daedalus (2.5M rep for The Red Pill vs ~462.5k to cross) is the case worth pushing; a small faction
+   * like CyberSec, whose whole remaining catalogue sits at ~18.75k rep, is not. */
   favorPush: boolean;
   /** THE RED PILL SHORTCUT. Once we are in Daedalus, put the action slot on it until its favor clears the
    * donation gate, ahead of every megacorp.
@@ -309,6 +315,34 @@ const DEFAULT: Omit<Strategy, 'disabledSubsystems'> = {
 
 /** Per-BitNode deltas from DEFAULT. Only fields that differ from the generic node appear here. */
 const OVERRIDES: Record<number, StrategyOverride> = {
+  // BN1 "Source Genesis": the CHEAPEST node in the game and the only one that penalizes nothing — its whole
+  // multiplier block is default, so ScriptHackMoney, HackExpGain, GangSoftcap, CrimeMoney, HacknetNodeMoney
+  // and AugmentationMoneyCost are all 1. The first node where the stack is not fighting the node.
+  //
+  // `hackReq` and `nextNode` are deliberately ABSENT: BN1 IS the generic node DEFAULT describes
+  // (WorldDaemonDifficulty 1 -> hacking 3000, `nextNode: 1`), and restating them here would be a second
+  // copy to drift. The three fields below are the only real deltas.
+  //
+  // Why we come back: SF-1 is +16% / +24% / +28% to ALL multipliers, and we hold only level 1. Two clears
+  // buy +12pp on every multiplier in the game — hacking, combat, money, rep, crime, hacknet — permanently,
+  // for the shortest runs available. Sharpen the axe before a hard node. SF caps at level 3 (RedPill.tsx:
+  // `lvl >= 3 && bitNodeNumber !== 12` just prints "already at max level"), so this is worth exactly two
+  // runs and a third would grant nothing.
+  1: {
+    // BN1 does NOT bypass the -54k karma gate — only `bitNodeN === 2` does — so the gang is founded by the
+    // same homicide cold start as BN4/BN5, via singularity/crime.ts.
+    crime: { needGang: true },
+    // The binding constraint here is NOT hacking: Daedalus wants 30 augs / $100b / hacking 2500 against a
+    // daemon req of only 3000, so the aug COUNT arrives last. The megacorp path is what widens the aug
+    // supply enough to reach 30, which is why it is on despite the short climb.
+    rep: {
+      companyRepPhase: true,
+      companyTargets: ['Bachman & Associates', 'OmniTek Incorporated', 'Clarke Incorporated', 'Four Sigma'],
+    },
+    // Same re-bootstrap-tax logic as BN4/BN5. Tunable: with no AugmentationMoneyCost penalty here, smaller
+    // batches bank multipliers sooner and might beat 8 — worth measuring across the two runs.
+    install: { minAugsQueued: 8 },
+  },
   // BN4 "The Singularity": the gang is the economy (GangSoftcap 1). Found it via a -54k karma crime
   // grind, pivot augs to hacking to drive level -> 9000, then leave for another BN4 run until SF-4.3.
   // Verified BN4 multipliers: CrimeSuccessRate 1 (homicide reaches full odds), WorldDaemonDifficulty 3.

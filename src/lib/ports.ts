@@ -8,7 +8,7 @@
  * unrelated file changes. Each script carries its own `REV` for that, printed as
  * `daemon v3 [build v17]`. Bump a script's REV when THAT script's behaviour changes; bump VERSION
  * on any change at all. */
-export const VERSION = 'v85';
+export const VERSION = 'v91';
 
 /** RAM to keep free on `home` for the controllers' TRANSIENT execs. Workers/share size themselves
  * as `maxRam - used - HOME_RESERVE`, and `used` already covers the resident controllers — so this
@@ -60,9 +60,13 @@ export const SING_FILE = '/data/singularity.json';
 /** The endgame close-out record, written by redpill.js/endgame.js and read (free) by the controller so it
  * knows whether the Red Pill is installed and how far the exit has progressed. Survives the Red-Pill install
  * (home files persist across augment installs), which is what lets the controller re-enter close mode after
- * the reset instead of falling back to building. Shape: `{ redPillInstalled, inDaedalus, hack, phase, detail }`.
- * `phase` drives the controller: 'grind'|'reclimb'|'installing'|'await-daedalus' (redpill.js) → 'await-root'|
- * 'bitverse' (endgame.js). Validate every field against a fail-SAFE default (no Red Pill, keep building). */
+ * the reset instead of falling back to building. Shape:
+ * `{ redPillInstalled, provenReq, inDaedalus, hack, phase, detail }`.
+ * `phase` drives the controller: 'grind'|'favor-bank'|'buying'|'reclimb'|'installing'|'await-daedalus'
+ * (redpill.js) → 'await-root'|'bitverse' (endgame.js). `provenReq` latches "we have reached the daemon
+ * hacking req at least once this node instance", which keeps close mode engaged across the favor-bank
+ * install — the Red Pill needs rep and $0, never a hacking level, so re-climbing before buying it wastes an
+ * entire climb. Validate every field against a fail-SAFE default (no Red Pill, not proven, keep building). */
 export const ENDGAME_FILE = '/data/endgame.json';
 
 /** augs.js publishes what it learned about the INSTALL decision here; install.js reads it for free.
@@ -94,6 +98,14 @@ export const GROW_MULT = 1.5;
  * Per-run overrides still win: --<key> forces it on for one run, --no-<key> forces it off. */
 export const BN_DISABLE: Record<number, string[]> = {
   0: [], // always-off list (currently none)
+  // BN1: identical RAM triage to BN4/BN5 — a 32 GB home cannot hold the ~26 GB Singularity controller, the
+  // daemon AND these during the karma grind. Nothing here is about BN1 being unfavourable; it penalizes
+  // nothing at all.
+  //
+  // hacknet is the standout re-enable, and unlike BN5 it is not a compromise: BN1's HacknetNodeMoney is
+  // DEFAULT (1.0), so it runs at full production — five times BN5's rate and twenty times BN4's.
+  // `run /bootstrap.js --hacknet` once home clears ~48 GB.
+  1: ['hacknet', 'monitor', 'share', 'auto-buy'],
   // BN4: hacknet ~5% of normal. monitor/share/auto-buy are held off during the karma grind so the ~26 GB
   // Singularity controller fits a 32 GB home alongside the daemon (it runs on home, where HOME_RESERVE
   // protects it from the daemon's pool workers — running it on a pool host lets the daemon steal its RAM).

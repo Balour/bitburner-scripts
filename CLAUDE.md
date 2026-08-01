@@ -44,11 +44,15 @@ Other v3 changes:
 > "BitNode 1, zero Source-Files, 8 GB home" long after that stopped being true and sent planning off
 > a cliff. The probe is the authority; everything below is a snapshot with a date on it.
 
-**SF-1.1, SF-2.3, SF-4.3.** BN1 cleared once, BN2 and BN4 cleared three times each.
+**SF-1.1, SF-2.3, SF-4.3, SF-5.3.** BN1 cleared once; BN2, BN4 and BN5 three times each.
 
-> Player-reported 2026-07-27, **not** probe output — the Source-File list is trustworthy, everything
+> Player-reported 2026-08-01, **not** probe output — the Source-File list is trustworthy, everything
 > else about the current run (node, home RAM, gang, programs, augs) is UNKNOWN here. Run
 > `/probe/state.js` and replace this block with its output before planning against it.
+
+**Source-Files cap at level 3.** `RedPill.tsx` only prints "already at max level!" for a fourth clear
+(`lvl >= 3 && bitNodeNumber !== 12`); BN12 is the sole uncapped node. So SF-2, SF-4 and SF-5 are
+finished — re-running those nodes grants nothing.
 
 From `Prestige.ts` — starting home RAM on entering a BitNode:
 
@@ -73,28 +77,31 @@ else setMaxRam(8);
 backdoors, faction joining, rep work, augment purchase and install are all automated — that is the
 `src/singularity/` stack. Anything in this doc still framed as "manual because no SF-4" is stale.
 
-**Next target: BN5 "Artificial Intelligence", one clear.** Cheapest exit remaining —
-`WorldDaemonDifficulty 1.5` → hacking **4500**, against BN4's 9000 and BN2's 15000. The prize is
-**SF-5.1**, which grants:
+**SF-5.3 means Formulas.exe is granted on EVERY prestige** — `Prestige.ts` pushes it from both
+`prestigeSourceFile` and `prestigeAugmentation` when `canAccessBitNodeFeature(5)`. Since programs
+otherwise die on entering a BitNode, `rank-formulas.ts` went from dead code costing $5b per run to the
+permanent path from second zero, with no post-install gap. SF-5 also grants `ns.getBitNodeMultipliers()`
+and permanent Intelligence, and +14% hacking multipliers at level 3.
 
-- **Formulas.exe on every prestige.** `Prestige.ts` pushes it from both `prestigeSourceFile` and
-  `prestigeAugmentation` when `canAccessBitNodeFeature(5)`. Since programs otherwise die on entering a
-  BitNode, this is the difference between `rank-formulas.ts` being dead code that costs $5b per run to
-  wake up and it being the permanent path from second zero, with no post-install gap.
-- `ns.getBitNodeMultipliers()` — lets `lib/strategy.ts` derive per-node config instead of hardcoding
-  `OVERRIDES`.
-- **Intelligence**, the one stat that never resets across BitNodes, plus +8% hacking multipliers.
+> `getBitNodeMultipliers()` is now available and still UNUSED. The intended payoff is deriving
+> `lib/strategy.ts` from live multipliers instead of hardcoding `OVERRIDES` — `hackReq` becomes
+> `3000 * WorldDaemonDifficulty`, and `BN_DISABLE` follows from `CloudServerLimit` / `HacknetNodeMoney`.
+> Keep `strategyFor()` PURE (0 GB): inject the multipliers from a paying caller, never read them inside it.
 
-BN5 config already landed: `OVERRIDES[5]` in `lib/strategy.ts` and `BN_DISABLE[5]` in `lib/ports.ts`.
+**Next target: BN1 "Source Genesis", two clears (SF-1.2, then SF-1.3).** The cheapest runs available —
+`WorldDaemonDifficulty 1` → hacking **3000**, and the only node whose multiplier block is entirely
+default, so nothing is nerfed and the stack runs at full strength for once. SF-1 is +16% / +24% / +28%
+to **all** multipliers and we hold level 1, so two clears buy +12pp on every multiplier in the game,
+permanently. Config landed: `OVERRIDES[1]` in `lib/strategy.ts`, `BN_DISABLE[1]` in `lib/ports.ts`.
 
-**BN9 was considered and deferred** — it is the node most hostile to this codebase:
-`CloudServerLimit: 0` (no purchased servers at all, so `auto-buy.ts` / `buy-servers.ts` /
-`lib/cloud.ts` are inert), `HomeComputerRamCost: 5`, `ServerMaxMoney 0.01` × `ScriptHackMoney 0.1`
-(daemon income down ~1000×), `HackExpGain: 0.05`. Revisit only after SF-5.
+**After that, BN10 "Digital Carbon" for SF-10** — sleeves in every BitNode, one per SF level (3 max
+outside BN10), plus the Grafting API. They attack the real bottleneck, which is the -54k karma grind
+that gates the gang in every node. Harder than BN1: hacking 6000 and `AugmentationMoneyCost: 5`.
 
-**Until BN5 is cleared, Formulas.exe is still not owned** ($5,000,000,000, or hacking level 1000 to
-write). Thread math stays on `rank.ts`'s min-security projection; the daemon execs `rank-formulas.js`
-instead the moment the file exists on home.
+**BN9 remains deferred** — the node most hostile to this codebase: `CloudServerLimit: 0` (no purchased
+servers at all, so `auto-buy.ts` / `buy-servers.ts` / `lib/cloud.ts` are inert),
+`HomeComputerRamCost: 5`, `ServerMaxMoney 0.01` × `ScriptHackMoney 0.1` (daemon income down ~1000×),
+`HackExpGain: 0.05`. Its 128 GB home start is SF-9 **level 2**, i.e. two clears of that.
 
 **Programs do not survive entering a BitNode** — only NUKE.exe carries over, so every run re-buys the
 port openers and SQLInject. Anywhere in this doc that calls a program "owned" is describing a *past*
@@ -188,6 +195,16 @@ and vanishes mid-`try`. **Treat it as fatal.**
 - **lower** it, but never below what you have already spent. Observed: after raising 1.6 → 4 and
   calling `getServer`, `ramOverride(1.6)` was refused and returned **4** (refusal returns the current
   allocation). Lowering to 3.6 — the high-water mark — would have worked.
+
+> **That accepted lowering is a live footgun, and it bit us.** A script that reserves for a cheap pass
+> and later asks for MORE to afford an optional expensive one will, on a momentarily full host, have
+> its request clamped *below* the allocation it is already running under — and `ramOverride` accepts
+> that as a lowering, because it is still above the high-water. The optional pass then correctly
+> declines while the ORIGINAL pass dies on a call its first reservation had covered. Seen 2026-07-28
+> in BN5: `augs.js` held 30 GB, asked 45, got **12.10**, and was killed at 14.35 GB by
+> `getAugmentationsFromFaction`. **Any repeated-reservation helper must clamp UP to the current
+> allocation** — `singularity/api.ts`'s `reserve()` is raise-only for exactly this reason.
+> `ramOverride()` with no argument reads the current limit for free, which is what makes that cheap.
 
 **So RAM dodging does not make calls free.** Pinning static RAM low only defers the reservation; the
 call still costs, and if the server lacks the RAM at that instant, `ramOverride` refuses and the
