@@ -41,9 +41,15 @@ import { sing, reserveOk } from './api';
  * Each step is best-effort: if home is too full to launch one, it is logged and the install proceeds.
  *
  * Run: `run /singularity/install.js`         respect the config triggers
- *      `run /singularity/install.js --force`  install now if anything is queued
+ *      `run /singularity/install.js --force`  install now, bypassing the triggers — and unlike the normal
+ *                                             path it does NOT require a pre-existing queue, since the
+ *                                             spend-down above is what fills one. That is what redpill.js
+ *                                             needs for the favor bank, where the reset itself is the point
+ *                                             and nothing has been bought. It still refuses to call
+ *                                             `installAugmentations` if the queue is empty afterwards —
+ *                                             that call no-ops silently and would loop the caller forever.
  */
-const REV = 'v3';
+const REV = 'v4';
 const NFG = 'NeuroFlux Governor';
 
 /** Consecutive stalled passes before trigger 2 fires. Income is continuous, so a single "cannot afford
@@ -91,9 +97,15 @@ export async function main(ns: NS) {
   const installed = s['getOwnedAugmentations'](false);
   const queuedNames = s['getOwnedAugmentations'](true).slice(installed.length);
   const realQueued = queuedNames.filter((n) => n !== NFG).length;
-  if (queuedNames.length === 0) return; // nothing to install; stay quiet on the timer
 
   const force = flags['force'] as boolean;
+  // Empty queue: nothing to install, stay quiet on the timer. But NOT under --force, which exists for
+  // resets whose VALUE is the reset itself rather than the augs — redpill.js's favor bank is the case:
+  // it installs to convert Daedalus rep into favor, and in close mode nothing has been bought, so the
+  // queue is empty by definition. Returning here would make --force a silent no-op, and the caller
+  // (which cannot see why) retries forever. The spend-down below is what CREATES the queue, so force
+  // must fall through to it; the re-count before the install is the real guard.
+  if (queuedNames.length === 0 && !force) return;
   const advice = readAdvice(ns, info.lastAugReset);
 
   // `--relaxed`: passed by the controller ONLY when its projection has PROVEN that installing reaches the
@@ -175,6 +187,21 @@ export async function main(ns: NS) {
   // Re-count: the pre-install pass just bought more augs AND the NFG levels, so the numbers above are stale.
   const finalQueue = s['getOwnedAugmentations'](true).slice(installed.length);
   const finalReal = finalQueue.filter((n) => n !== NFG).length;
+
+  // THE GUARD. `installAugmentations` silently does nothing on an empty queue — verified in the live d.ts:
+  // "If you do not own any queued Augmentations then the game will not reset." It does not throw and does
+  // not return a status, so a caller that assumes it reset will loop forever with no diagnostic. That is
+  // exactly what a forced favor-bank install did before the spend-down was allowed to run first. If the
+  // spend-down still bought nothing, say so loudly rather than pretending to reset.
+  if (finalQueue.length === 0) {
+    ns.tprint(
+      `WARN install ${REV}: ${why}, but the queue is EMPTY after the spend-down — installAugmentations ` +
+        `would no-op. Nothing was purchasable (check cash, faction membership, and augs.neuroFluxDump). ` +
+        `NOT resetting.`,
+    );
+    return;
+  }
+
   ns.tprint(
     `=== install ${REV} — ${why}; installing ${finalReal} aug(s) + ` +
       `${finalQueue.length - finalReal}x ${NFG}, relaunching ===`,

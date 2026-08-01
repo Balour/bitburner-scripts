@@ -34,6 +34,14 @@ const BUDGET = [
     '2.30',
     'scan 0.2 + fileExists 0.1 + hasRootAccess 0.05 + numPorts/reqLevel/maxMoney 0.3 + hackingLevel 0.05',
   ],
+  // The Singularity calls it makes (connect, installBackdoor) are bracket-hidden and paid
+  // dynamically under reserve() — if this line ever jumps by ~2 GB or more, someone rewrote a
+  // `s['connect']` as `s.connect` and the script will die on a full home instead of declining.
+  [
+    '/connect.js',
+    '3.25',
+    'pathTo 0.2 + getResetInfo 1 + hasRootAccess 0.05 + hackingLevel 0.05 + reqLevel 0.1 + reserve 0.25',
+  ],
   [
     '/bootstrap.js',
     '4.10',

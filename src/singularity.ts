@@ -100,11 +100,20 @@ function backdoorPending(ns: NS): boolean {
  * of the same BitNode number (BN4 -> BN4), is discarded as stale instead of falsely reporting the Red Pill in. */
 interface Endgame {
   redPillInstalled: boolean;
+  /** We have REACHED the daemon hacking req at least once this node instance. redpill.js stamps it true on
+   * every write, because close mode is the only thing that runs it — so by then the proof already happened.
+   *
+   * Why it must be a latch and not a live `hack >= req` read: acquiring the Red Pill needs 2.5M Daedalus rep
+   * and $0, and NO hacking level at all — the req exists only for the final w0r1d_d43m0n backdoor. Deriving
+   * close mode from live hacking meant any install during the close-out (the favor bank below) dropped us
+   * back to BUILD mode, which then re-climbed to the req BEFORE buying the Red Pill — and the Red-Pill
+   * install immediately reset that climb to 1. That is one entire wasted climb per close-out. */
+  provenReq: boolean;
   phase: string;
   detail: string;
 }
 function readEndgame(ns: NS, nodeReset: number): Endgame {
-  const safe: Endgame = { redPillInstalled: false, phase: '', detail: '' };
+  const safe: Endgame = { redPillInstalled: false, provenReq: false, phase: '', detail: '' };
   try {
     const raw = ns.read(ENDGAME_FILE);
     if (!raw) return safe;
@@ -112,6 +121,7 @@ function readEndgame(ns: NS, nodeReset: number): Endgame {
     if (o.nodeReset !== nodeReset) return safe; // record is from a previous node instance — ignore it
     return {
       redPillInstalled: o.redPillInstalled === true,
+      provenReq: o.provenReq === true,
       phase: typeof o.phase === 'string' ? o.phase : '',
       detail: typeof o.detail === 'string' ? o.detail : '',
     };
@@ -339,7 +349,10 @@ export async function main(ns: NS) {
     // stop building and drive the exit. Verified chain (live d.ts + bitburner-src): the Red Pill (2.5M
     // Daedalus rep, $0) must be INSTALLED — that's what wires w0r1d_d43m0n into the network — then the daemon
     // is rooted and either backdoored (-> BitVerse, which WAITS for your node choice) or destroyed (auto-jump).
-    const closeMode = hack >= strat.endgame.hackReq || eg.redPillInstalled;
+    // `provenReq` is the third term, and it is what stops an install DURING the close-out from bouncing us
+    // back to building. See the Endgame interface: the Red Pill costs rep and $0, not hacking level, so once
+    // the req has been proven the right order is bank favor -> donate -> buy -> install -> climb ONCE.
+    const closeMode = hack >= strat.endgame.hackReq || eg.redPillInstalled || eg.provenReq;
     if (closeMode) {
       // Endgame action already taken: daemon backdoored, sitting at the BitVerse for you to choose a node.
       if (eg.phase === 'bitverse') {

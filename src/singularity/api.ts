@@ -11,7 +11,10 @@ import type { NS } from '@ns';
  *
  * 2. **Make the dynamically-costed calls payable.** Reservation only defers cost; the real RAM is
  *    charged at call time. `reserve()` raises `ramOverride` to cover it, CLAMPED to the running host's
- *    RAM — `connect.ts`'s fixed `ramOverride(128)` refuses on a 32 GB home and the next call dies.
+ *    RAM. A fixed request is the trap: `connect.ts` asked for a flat 128 GB, home did not have it, the
+ *    raise was REFUSED (leaving the ~3 GB static allocation intact and silently returning it), and the
+ *    first `singularity.connect` died at 5.00 GB. Observed 2026-07-29; it now uses `reserve()` and
+ *    declines cleanly. Always compare the RETURN of `reserve()` against what you need.
  *
  * Inside BN4 the Singularity multiplier is ×1, so base costs apply and modest reservations fit a 32 GB
  * home. Outside BN4 it is ×16/4/1 by SF-4 level — same code, raise `reserve()` and run on a fat host.
@@ -112,8 +115,21 @@ export function isBackdoored(ns: NS, host: string): boolean {
 /**
  * Raise this script's RAM reservation to `gb` so bracket-hidden Singularity calls are payable, clamped
  * to what the running host actually has (never request more than exists, or the raise is refused and the
- * next call kills the script). Returns the resulting allocation. Call it ONCE, before the first
- * Singularity call. `host` defaults to where the script runs.
+ * next call kills the script). Returns the resulting allocation. `host` defaults to where the script runs.
+ *
+ * RAISE-ONLY, and that is load-bearing. A caller may reserve for a cheap pass and later ask for more to
+ * afford an optional expensive one (augs.ts does this twice: donations, then getAugmentationStats). The
+ * host can be fuller at the second call than the first, which clamps the REQUEST below the allocation we
+ * are already running under — and `ramOverride` happily accepts a reduction as long as it stays above the
+ * dynamic high-water spent so far. That silently downgrades a healthy 30 GB reservation to whatever
+ * happened to be free, the optional pass correctly declines, and then the ORIGINAL pass dies on a call it
+ * had already paid for.
+ *
+ * Observed 2026-07-28 (BN5, overnight): augs.js held 30 GB, asked for 45 while home was full, got 12.10,
+ * and was killed by `getAugmentationsFromFaction` at 14.35 GB — a call the 30 GB reservation covered.
+ * So clamp UP to the current allocation: a raise that does not fit leaves the caller exactly as it was,
+ * and `reserve(...) >= need` still reads false, which is what makes the optional pass skip cleanly.
+ * `ramOverride()` with no argument reads the current limit without changing it, and costs 0 GB.
  */
 export function reserve(ns: NS, gb: number, host?: string): number {
   const where = host ?? ns.getHostname();
@@ -122,7 +138,8 @@ export function reserve(ns: NS, gb: number, host?: string): number {
   // ownStatic + whatever is free. Never request more than that.
   const free = ns.getServerMaxRam(where) - ns.getServerUsedRam(where);
   const ownStatic = ns.getScriptRam(ns.getScriptName(), where);
-  return ns.ramOverride(Math.min(gb, ownStatic + Math.max(free, 0)));
+  const affordable = Math.min(gb, ownStatic + Math.max(free, 0));
+  return ns.ramOverride(Math.max(affordable, ns.ramOverride()));
 }
 
 /**

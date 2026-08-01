@@ -21,15 +21,17 @@ import { sing, reserveOk } from './api';
  * - **Skip donatable factions.** Above `ns.getFavorToDonate()` favor, a faction's rep is purchasable, and
  *   `augs.ts` buys it in the same cycle it spends it. Grinding such a faction by hand is the exact waste
  *   this rule exists to kill — the slot belongs on a faction money cannot help.
- * - **Push factions over the favor gate first** (`strat.rep.favorPush`). Favor is awarded only at an
- *   install, which converts rep to favor and zeroes the rep. Crossing the gate therefore turns that
- *   faction's rep from a time cost into a money cost PERMANENTLY (for the rest of the BitNode — favor
- *   resets on entering a new one). The last stretch of rep before the gate is the highest-leverage work
- *   available, so it outranks a faction that merely has more augs on offer.
+ * - **Push factions over the favor gate first** (`strat.rep.favorPush`) — but ONLY where the gate is the
+ *   cheaper route. Favor is awarded only at an install, which converts rep to favor and zeroes the rep.
+ *   Crossing turns that faction's rep from a time cost into a money cost PERMANENTLY (for the rest of the
+ *   BitNode — favor resets on entering a new one), so the last stretch before the gate outranks a faction
+ *   that merely has more augs on offer. The qualifier matters: if the priciest gated aug is closer than
+ *   the gate, grinding the augs directly is both cheaper AND finishes the faction, and pushing for favor
+ *   is pure waste. Compare the two gaps; never assume the gate wins.
  *
  * Run: `run /singularity/repwork.js`
  */
-const REV = 'v8';
+const REV = 'v9';
 /** Default order: hacking work pays the most rep for a hacking-built character, and its XP feeds the
  * endgame climb. Swapped for the combat order below while a combat gate is open. */
 const WORK_TYPES = ['hacking', 'security', 'field'];
@@ -149,15 +151,30 @@ export async function main(ns: NS) {
     .map((f) => {
       const rep = s['getFactionRep'](f);
       let want = 0;
+      /** The priciest gated aug's shortfall — i.e. the rep that FINISHES this faction by hand, since
+       * clearing the most expensive one clears every cheaper one along the way. */
+      let augGap = 0;
       for (const aug of s['getAugmentationsFromFaction'](f)) {
-        if (!owned.has(aug) && s['getAugmentationRepReq'](aug) > rep) want++;
+        if (owned.has(aug)) continue;
+        const gap = s['getAugmentationRepReq'](aug) - rep;
+        if (gap > 0) {
+          want++;
+          if (gap > augGap) augGap = gap;
+        }
       }
       // Rep still needed ON TOP of what we hold for the next install to carry this faction over the
       // donation gate. 0 means the favor is already banked — installing now unlocks donations here, so
       // there is nothing further to gain by grinding it for FAVOR (its augs may still be worth rep).
-      const favorShort = strat.rep.favorPush
-        ? Math.max(0, repToReachFavor(s['getFactionFavor'](f), minFavor) - rep)
-        : 0;
+      const gateGap = Math.max(0, repToReachFavor(s['getFactionFavor'](f), minFavor) - rep);
+      // ...and only PUSH for it where the gate is genuinely the cheaper route. Crossing costs `gateGap`
+      // rep and then money; finishing by hand costs `augGap` rep and nothing else. When augGap is the
+      // smaller number the push is strictly wasted work — it buys donation access to a faction we are
+      // about to have no further use for, since buying the augs empties it and `want` drops to 0.
+      //
+      // Observed in BN5: CyberSec, priciest gated aug 18.75k rep, being ground 332.768k rep toward the
+      // gate — 17x the work for zero gain. Daedalus is the shape this feature IS for (2.5M rep for The
+      // Red Pill against ~462.5k to cross) and still qualifies, as does any megacorp with a deep catalogue.
+      const favorShort = strat.rep.favorPush && augGap > gateGap ? gateGap : 0;
       return { faction: f, want, favorShort };
     })
     .filter((c) => c.want > 0)
