@@ -63,11 +63,6 @@ export type BitNodeMults = Partial<
  */
 export type Route = 'hacking' | 'gang';
 
-/** Which augment family the buyer weights first. PHASE-dependent, not node-static: the gang route
- * grinds combat early (faster homicide) and pivots to hacking once the gang is founded, because from
- * then on hacking level is what drives the daemon requirement. */
-export type AugFocus = 'hacking' | 'combat' | 'money';
-
 export interface RouteStrategy {
   /** The action-slot economy. Derived from live multipliers when they are available (see
    * `strategyFor`), overridable per node. */
@@ -96,10 +91,14 @@ export interface CrimeStrategy {
   gymStatTarget: number;
 }
 
-/** Augment purchase priority + budget. */
+/** Augment purchase budget.
+ *
+ * `focus` USED TO LIVE HERE and was removed: it was declared, set in three OVERRIDES entries, and read
+ * by nothing for the whole life of the file. The behaviour it described — combat augs during the karma
+ * grind, hacking augs after — is real and now implemented in `augs.ts`, derived from live phase
+ * (`route.primary === 'gang' && !inGang`) rather than configured per node, because `strategyFor` cannot
+ * know whether the gang exists yet. Don't reintroduce it as a knob. */
 export interface AugStrategy {
-  /** Primary stat family to buy toward when funds are limited. */
-  focus: AugFocus;
   /** Keep at least this much liquid; never spend the reserve on augs. */
   cashReserve: number;
   /** After the priced one-time augs, dump surplus into NeuroFlux Governor levels. */
@@ -342,7 +341,6 @@ const DEFAULT: Omit<Strategy, 'disabledSubsystems'> = {
     gymStatTarget: 120,
   },
   augs: {
-    focus: 'hacking',
     cashReserve: 10e6,
     neuroFluxDump: true,
   },
@@ -425,7 +423,7 @@ const OVERRIDES: Record<number, StrategyOverride> = {
   // Verified BN4 multipliers: CrimeSuccessRate 1 (homicide reaches full odds), WorldDaemonDifficulty 3.
   4: {
     route: { primary: 'gang' },
-    augs: { focus: 'hacking' },
+
     // Grind order from /probe/aug-priority.js, exclusive augs first. Bachman leads (SmartJaw — a
     // rep-booster + charisma that only it sells); OmniTek/Clarke for their hacking augs. Four Sigma is
     // LAST because its ADR-V rep-boosters are sold by many factions and get owned early — repwork skips a
@@ -476,7 +474,7 @@ const OVERRIDES: Record<number, StrategyOverride> = {
     route: { primary: 'gang' },
     // AugmentationMoneyCost 2: every aug costs double, so keep more liquid and install in bigger
     // batches to amortize the re-bootstrap tax over fewer resets.
-    augs: { focus: 'hacking', cashReserve: 20e6 },
+    augs: { cashReserve: 20e6 },
     install: { minAugsQueued: 8 },
     rep: {
       companyRepPhase: true,

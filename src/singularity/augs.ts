@@ -58,7 +58,7 @@ import { sing, reserve, reserveOk, donationRate } from './api';
  * Run: `run /singularity/augs.js`               periodic pass — real augs only
  *      `run /singularity/augs.js --preinstall`  final pass — spend everything, then NFG (install.js does this)
  */
-const REV = 'v3';
+const REV = 'v4';
 const NFG = 'NeuroFlux Governor';
 /** Owned by redpill.ts, never bought here. See `offers()` for why. */
 const RED_PILL = 'The Red Pill';
@@ -73,6 +73,15 @@ const BUY_GB = 30;
 const DONATE_GB = 39;
 /** ...and getAugmentationStats on top of whichever of those two ran, to price the install decision. */
 const STATS_GB = 5;
+
+/** The `Multipliers` fields that make an augmentation worth buying DURING the karma grind. Homicide
+ * success is `Σ(weight × stat) / 975 / difficulty × mult` with STR and DEF weighted 2 (verified: the
+ * field is `defense_success_weight`, not dexterity), so those two dominate — but crime_success and
+ * crime_money move the same loop directly, and agi/dex still contribute at weight 1.
+ *
+ * String literals, and read by bracket access at the call site: the static RAM parser searches its cost
+ * table by BARE NAME at any depth, so `stats.strength` on a plain return value would bill a real API. */
+const COMBAT_STATS = ['strength', 'defense', 'dexterity', 'agility', 'crime_success', 'crime_money'] as const;
 
 /** Calibration donation. Big enough to read a clean rep delta, small enough to be noise against any cash
  * pile that makes donating worthwhile in the first place. */
@@ -229,6 +238,43 @@ export async function main(ns: NS) {
     }
   }
   buyable.sort((a, b) => b.price - a.price);
+
+  // FOCUS FILTER. While the karma grind owns the action slot, buy ONLY combat/crime augs.
+  //
+  // Not merely a preference — buying a hacking aug mid-grind is actively harmful.
+  // `getGenericAugmentationPriceMultiplier()` is `1.9 ^ queuedAugmentations.length`, so every queued
+  // hacking aug multiplies the price of the combat augs we actually want by 1.9. And the install that
+  // banks them zeroes combat levels (`prestigeAugmentation`), slowing homicide, for augs that do nothing
+  // for karma. Combat augs pay both ways: homicide success is Σ(weight × stat) with STR/DEF weighted 2.
+  //
+  // The phase is read live rather than configured — `strategyFor` has no idea whether the gang exists
+  // yet. This is what `augs.focus` was always supposed to mean; it was declared and never read.
+  const grinding = strat.route.primary === 'gang' && !ns.gang.inGang();
+  if (grinding && buyable.length > 0) {
+    // getAugmentationStats is 5 GB on top of the buy pass. Raise lazily and FAIL OPEN: an unfiltered buy
+    // is merely suboptimal, whereas a filter that silently matches nothing would stall every purchase for
+    // the rest of the grind. `reserve()` is raise-only, so this can never shrink what we already hold.
+    if (reserve(ns, BUY_GB + STATS_GB + 4) >= BUY_GB + STATS_GB) {
+      const isCombat = (aug: string): boolean => {
+        const st = s['getAugmentationStats'](aug) as unknown as Record<string, number>;
+        // Bracket access throughout: the static parser bills a bare property name that collides with any
+        // NS API at any depth, and `strength`/`agility` and friends do.
+        return COMBAT_STATS.some((k) => (st[k] ?? 1) !== 1);
+      };
+      const combatOnly = buyable.filter((b) => isCombat(b.aug));
+      // An EMPTY result is respected, not treated as an error: nothing combat-relevant is purchasable, so
+      // the right move is to buy nothing and keep the queue (and combat stats) clean until the gang founds.
+      // install.js cannot fire on an empty queue, so this cannot trigger a reset either.
+      ns.tprint(
+        `  focus: karma grind — ${combatOnly.length}/${buyable.length} buyable augs are combat/crime; ` +
+          `holding the rest until the gang founds`,
+      );
+      buyable.length = 0;
+      buyable.push(...combatOnly);
+    } else {
+      ns.print('focus: could not afford getAugmentationStats — buying unfiltered this pass.');
+    }
+  }
 
   const bought: string[] = [];
   let spentOnAugs = 0;
