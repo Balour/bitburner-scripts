@@ -1,6 +1,7 @@
 import type { NS, BitNodeMultipliers } from '@ns';
 import { BITNODE_FILE, VERSION } from '../lib/ports';
-import type { BitNodeRecord } from '../lib/bitnode';
+import { MULT_KEYS, type BitNodeRecord } from '../lib/bitnode';
+import { deriveRoute, strategyFor } from '../lib/strategy';
 
 /**
  * 6.6 GB, one-shot. The ONLY script that pays for `ns.getBitNodeMultipliers` (4 GB, needs SF-5). Writes
@@ -21,12 +22,14 @@ import type { BitNodeRecord } from '../lib/bitnode';
  * Run: `run /probe/bitnode.js`      this node — print and write the record
  *      `run /probe/bitnode.js 10`   price BN10 — print only
  */
-const REV = 'v1';
+const REV = 'v2';
 
 /** Printed with the decision each one drives, because a bare number is not actionable. Everything else in
  * `BitNodeMultipliers` is real but nothing here reads it — see it with `--all`. */
 const NOTABLE: [keyof BitNodeMultipliers, string][] = [
   ['WorldDaemonDifficulty', 'x3000 = the daemon hacking req -> strategy.endgame.hackReq'],
+  ['DaedalusAugsRequirement', 'augs for the Daedalus invite -> the Red Pill gate'],
+  ['ServerMaxMoney', 'x ScriptHackMoney = the hacking-vs-gang route derivation'],
   ['CloudServerLimit', '0 = purchased servers IMPOSSIBLE -> auto-buy force-disabled'],
   ['ScriptHackMoney', 'daemon income vs BN1'],
   ['HackExpGain', 'how fast the hacking climb goes'],
@@ -63,6 +66,21 @@ export async function main(ns: NS) {
   ns.tprint(`=== bitnode ${REV} [build ${VERSION}] — BN${node}${node === here ? ' (current)' : ' (lookup)'} ===`);
   ns.tprint(`  daemon hacking req: ${3000 * mults.WorldDaemonDifficulty}`);
 
+  // Print BOTH, because they answer different questions. `derived` tests the heuristic in isolation;
+  // `resolved` is what the loop will actually do, and an explicit OVERRIDES.route beats the derivation
+  // for any node a human has already judged. Them disagreeing is informative, not a bug — but a node
+  // where they disagree and you no longer remember WHY is a note worth writing down.
+  //
+  // This is also the only cheap test of the derivation, since every node we have played carries an
+  // override that masks it: `run /probe/bitnode.js 4` must derive `gang`, which is how we played BN4.
+  const derived = deriveRoute(mults);
+  const resolved = strategyFor(node, mults).route.primary;
+  const hackFactor = (mults.ScriptHackMoney ?? 1) * (mults.ServerMaxMoney ?? 1);
+  ns.tprint(
+    `  route: ${resolved}${derived === resolved ? '' : `  (derivation said ${derived} — OVERRIDDEN)`}` +
+      `   [hack income factor ${hackFactor.toFixed(3)} vs floor 0.5]`,
+  );
+
   const entries = flags['all']
     ? (Object.keys(mults) as (keyof BitNodeMultipliers)[]).map((k): [keyof BitNodeMultipliers, string] => [k, ''])
     : NOTABLE;
@@ -84,11 +102,14 @@ export async function main(ns: NS) {
     return;
   }
 
-  const rec: BitNodeRecord = {
-    node: here,
-    ok: true,
-    mults: { WorldDaemonDifficulty: mults.WorldDaemonDifficulty, CloudServerLimit: mults.CloudServerLimit },
-  };
+  // Written from the SHARED key list in lib/bitnode, not a hand-copied object literal: the writer and
+  // the reader drifting apart is how a field reads back undefined forever with nothing to show for it.
+  const persisted: Record<string, number> = {};
+  for (const key of MULT_KEYS) {
+    const v = mults[key];
+    if (typeof v === 'number' && Number.isFinite(v)) persisted[key] = v;
+  }
+  const rec: BitNodeRecord = { node: here, ok: true, mults: persisted };
   ns.write(BITNODE_FILE, JSON.stringify(rec), 'w');
   ns.tprint(`  wrote ${BITNODE_FILE} — strategyFor now derives hackReq from the live game.`);
   ns.tprint('');

@@ -19,6 +19,20 @@ import { strategyFor, type Strategy, type BitNodeMults } from './strategy';
  * in strategy.ts (the consumer) precisely so these two do not form an import cycle.
  */
 
+/**
+ * The multiplier fields we persist and read back. ONE list, exported, so the probe writes exactly what
+ * the reader validates — the two drifting apart is how a field silently reads back `undefined` forever.
+ * Adding a field here plus the logic that consumes it in `strategyFor` is the whole change.
+ */
+export const MULT_KEYS = [
+  'WorldDaemonDifficulty',
+  'CloudServerLimit',
+  'ScriptHackMoney',
+  'ServerMaxMoney',
+  'GangSoftcap',
+  'DaedalusAugsRequirement',
+] as const satisfies readonly (keyof BitNodeMults)[];
+
 /** What the probe writes. `ok: false` records that the call was UNAVAILABLE (no SF-5), which is worth
  * persisting: without it bootstrap would re-run a 4 GB probe every reset to rediscover the same gap. */
 export interface BitNodeRecord {
@@ -37,17 +51,21 @@ export function readBitNodeRecord(ns: NS, node: number): BitNodeRecord | undefin
     if (o.node !== node) return undefined; // written in a previous BitNode — stale by definition
     if (o.ok !== true) return { node, ok: false };
     const m = o.mults;
-    // Validate every consumed field individually. A partially-written record must degrade to "no data"
-    // rather than hand `strategyFor` an undefined it would multiply into NaN — `hackReq: NaN` compares
-    // false against everything, which would silently disable close mode forever.
-    if (!m || !Number.isFinite(m.WorldDaemonDifficulty) || !Number.isFinite(m.CloudServerLimit)) {
-      return { node, ok: false };
+    if (!m || typeof m !== 'object') return { node, ok: false };
+
+    // Copy field by field, keeping only finite numbers. PER-FIELD rather than all-or-nothing on purpose:
+    // this record survives augment installs, so one written by an older probe legitimately lacks fields
+    // added since, and discarding the whole thing over that would throw away the fields that ARE valid.
+    // Dropping a bad field instead lets `strategyFor` fall back to a neutral 1.0 for just that decision.
+    //
+    // What must NEVER happen is a non-finite value reaching the consumer: `hackReq: NaN` compares false
+    // against every threshold, which would silently disable close mode for the whole run.
+    const mults: BitNodeMults = {};
+    for (const key of MULT_KEYS) {
+      const v = m[key];
+      if (typeof v === 'number' && Number.isFinite(v)) mults[key] = v;
     }
-    return {
-      node,
-      ok: true,
-      mults: { WorldDaemonDifficulty: m.WorldDaemonDifficulty, CloudServerLimit: m.CloudServerLimit },
-    };
+    return { node, ok: true, mults };
   } catch {
     return undefined;
   }

@@ -21,21 +21,69 @@ import { BN_DISABLE } from './ports';
  * adding the logic that reads it. `Pick` keeps us honest against the real `BitNodeMultipliers` — a field
  * renamed in a game update becomes a compile error rather than a silent 1.0.
  *
+ * EVERY FIELD IS OPTIONAL, and that is load-bearing rather than laziness. The record lives in a file that
+ * survives augment installs, so a record written by an older `probe/bitnode.js` legitimately lacks fields
+ * added later — exactly the cross-version port hazard `lib/ports.ts` warns about. Rejecting the whole
+ * record over one missing field would throw away the fields that ARE there, so each is guarded at its
+ * point of use and falls back to the neutral 1.0 instead.
+ *
  * It is declared HERE, in the consumer, and not in `lib/bitnode.ts`, on purpose. bitnode imports
  * `strategyFor` as a VALUE; if strategy imported this type back from bitnode the two modules would form
  * an import cycle that survives only as long as the transform erases the type import exactly as expected.
  * Declaring it here makes the dependency strictly one-way — `bitnode -> strategy -> ports` — so there is
  * no cycle to reason about. `@ns` is types only, so this import is free and erases completely.
  */
-export type BitNodeMults = Pick<BitNodeMultipliers, 'WorldDaemonDifficulty' | 'CloudServerLimit'>;
+export type BitNodeMults = Partial<
+  Pick<
+    BitNodeMultipliers,
+    | 'WorldDaemonDifficulty'
+    | 'CloudServerLimit'
+    | 'ScriptHackMoney'
+    | 'ServerMaxMoney'
+    | 'GangSoftcap'
+    | 'DaedalusAugsRequirement'
+  >
+>;
 
-/** Which augment family the buyer weights first. Phase-dependent in practice: a gang node
- * grinds combat early (faster homicide) then pivots to hacking (level -> daemon requirement). */
+/**
+ * Which economy the player ACTION SLOT bootstraps.
+ *
+ * This is the only genuinely contended resource in the run. The daemon, coding contracts, aug buying,
+ * installs and home upgrades are all already parallel and do not care which route is active — so this
+ * is not "two pipelines", it is one scheduler with one output.
+ *
+ * - `hacking` — the slot goes to faction rep from tick zero. Correct wherever the daemon is not
+ *   throttled: the gang's ~10-17h karma cold start buys an income stream we already have.
+ * - `gang` — the slot goes to the homicide karma grind until the gang exists, then to rep. Correct
+ *   where hacking income is crippled (BN2 at 8% max money, BN4 at 20%, BN5 at 15%) and the gang is
+ *   genuinely the only economy.
+ *
+ * Bladeburner will be a third value once SF-6/7 exist. That is the reason this is an enum and not a
+ * boolean, and the reason `crime.needGang` is derived from it rather than set alongside it.
+ */
+export type Route = 'hacking' | 'gang';
+
+/** Which augment family the buyer weights first. PHASE-dependent, not node-static: the gang route
+ * grinds combat early (faster homicide) and pivots to hacking once the gang is founded, because from
+ * then on hacking level is what drives the daemon requirement. */
 export type AugFocus = 'hacking' | 'combat' | 'money';
 
-/** Cold-start crime -> gang path. Only nodes that must FOUND a gang via karma use this. */
+export interface RouteStrategy {
+  /** The action-slot economy. Derived from live multipliers when they are available (see
+   * `strategyFor`), overridable per node. */
+  primary: Route;
+  /** Found a gang if karma reaches the gate ANYWAY — crime-money bridging accumulates it as a side
+   * effect, and sleeves will later. Never spends slot time chasing it, so this is free upside; the
+   * gang is income plus a faction that accrues rep passively. Only meaningful on the hacking route,
+   * where nothing is deliberately grinding karma. */
+  gangIfFree: boolean;
+}
+
+/** Cold-start crime -> gang path. Only used while `route.primary === 'gang'`. */
 export interface CrimeStrategy {
-  /** Does this node reach its economy through a karma-founded gang? (BN4: yes.) */
+  /** DERIVED from `route.primary` — never set this in OVERRIDES, set `route` instead. Kept as a field
+   * because the controller and crime.ts read it, and because "is the karma grind active" is a
+   * different question from "which route are we on" once Bladeburner exists. */
   needGang: boolean;
   /** Karma to found a gang. NEGATIVE. -54000 everywhere except BN2 (which bypasses the gate). */
   karmaTarget: number;
@@ -264,6 +312,7 @@ export interface HomeStrategy {
 export interface Strategy {
   /** Stack keys bootstrap should NOT launch in this node. Computed from `ports.BN_DISABLE`. */
   disabledSubsystems: string[];
+  route: RouteStrategy;
   crime: CrimeStrategy;
   augs: AugStrategy;
   rep: RepStrategy;
@@ -281,7 +330,12 @@ type StrategyOverride = {
 
 /** Generic hacking-money node: no gang, buy hacking augs, notify before leaving. Overridden per node. */
 const DEFAULT: Omit<Strategy, 'disabledSubsystems'> = {
+  route: {
+    primary: 'hacking',
+    gangIfFree: true,
+  },
   crime: {
+    // DERIVED — `strategyFor` overwrites this from `route.primary`. The value here is only the shape.
     needGang: false,
     karmaTarget: -54000,
     homicideChanceSwitch: 0.5,
@@ -344,9 +398,17 @@ const OVERRIDES: Record<number, StrategyOverride> = {
   // `lvl >= 3 && bitNodeNumber !== 12` just prints "already at max level"), so this is worth exactly two
   // runs and a third would grant nothing.
   1: {
-    // BN1 does NOT bypass the -54k karma gate — only `bitNodeN === 2` does — so the gang is founded by the
-    // same homicide cold start as BN4/BN5, via singularity/crime.ts.
-    crime: { needGang: true },
+    // NO GANG HERE, and this reverses the earlier call. BN1 does not bypass the -54k karma gate (only
+    // `bitNodeN === 2` does), so a gang would cost the ~10-17h homicide grind that BN4/BN5 paid — and in
+    // those nodes it was worth it because hacking was throttled to 20% / 15%. BN1 throttles NOTHING, so the
+    // daemon is the economy from minute one and the grind buys an income stream we already have.
+    //
+    // The decisive part is what `needGang: true` COSTS: `singularity.ts` gates all of P2/P3 behind the gang,
+    // so the whole grind runs with augs unbought, rep unworked and installs held. Measured live 2026-08-02:
+    // $2.7b idle, 15k NiteSec rep unspent and 31 purchasable augs across four already-joined factions, none
+    // of it reachable. Daedalus needs 30 augs / $100b / hacking 2500 (FactionInfo.tsx) — those 31 cover the
+    // gate on their own, so the Red Pill path closes without a gang at all.
+    route: { primary: 'hacking' },
     // The binding constraint here is NOT hacking: Daedalus wants 30 augs / $100b / hacking 2500 against a
     // daemon req of only 3000, so the aug COUNT arrives last. The megacorp path is what widens the aug
     // supply enough to reach 30, which is why it is on despite the short climb.
@@ -362,7 +424,7 @@ const OVERRIDES: Record<number, StrategyOverride> = {
   // grind, pivot augs to hacking to drive level -> 9000, then leave for another BN4 run until SF-4.3.
   // Verified BN4 multipliers: CrimeSuccessRate 1 (homicide reaches full odds), WorldDaemonDifficulty 3.
   4: {
-    crime: { needGang: true },
+    route: { primary: 'gang' },
     augs: { focus: 'hacking' },
     // Grind order from /probe/aug-priority.js, exclusive augs first. Bachman leads (SmartJaw — a
     // rep-booster + charisma that only it sells); OmniTek/Clarke for their hacking augs. Four Sigma is
@@ -411,7 +473,7 @@ const OVERRIDES: Record<number, StrategyOverride> = {
     // ScriptHackMoney 0.15 means hacking is not the economy here either — the gang is. BN5 does NOT
     // bypass the karma gate (only `bitNodeN === 2` does), so this is the same -54k homicide cold start
     // as BN4, driven by singularity/crime.ts.
-    crime: { needGang: true },
+    route: { primary: 'gang' },
     // AugmentationMoneyCost 2: every aug costs double, so keep more liquid and install in bigger
     // batches to amortize the re-bootstrap tax over fewer resets.
     augs: { focus: 'hacking', cashReserve: 20e6 },
@@ -445,6 +507,43 @@ function mergeSection<T>(base: T, over: Partial<T> | undefined): T {
 const WORLD_DAEMON_BASE_REQ = 3000;
 
 /**
+ * Hacking income relative to BN1, below which the action slot is better spent founding a gang than
+ * working faction rep. Both terms scale daemon income multiplicatively, so their product is the honest
+ * measure: `ScriptHackMoney × ServerMaxMoney`.
+ *
+ * Fitted to the four nodes we have actually played, which is the only evidence available:
+ *   BN1  1.00 × 1.00 = 1.00  -> hacking   (played: gang was a 10-17h detour we did not need)
+ *   BN2  1.00 × 0.08 = 0.08  -> gang      (played gang)
+ *   BN4  0.20 × 1.00 = 0.20  -> gang      (played gang)
+ *   BN5  0.15 × 1.00 = 0.15  -> gang      (played gang)
+ * BN10 sits exactly on 0.50 and is the one to watch — treat its verdict as unproven.
+ *
+ * It is a judgement call fitted to four points, not a law. Any node can override `route` explicitly.
+ */
+const HACK_ROUTE_FLOOR = 0.5;
+/** Below this, the gang is itself throttled hard enough (BN13 is 0.3) that its cold start cannot repay
+ * the slot time even where hacking is also poor — so stay on hacking and accept a slow node. */
+const GANG_VIABLE_SOFTCAP = 0.5;
+
+/**
+ * The route this node's multipliers argue for, ignoring any hand-written override. PURE (0 GB).
+ *
+ * Exported so `probe/bitnode.js` can print it for a node you are NOT in — which is the only cheap way to
+ * check the heuristic, since every node we have played also carries an explicit `OVERRIDES.route` that
+ * masks it. `run /probe/bitnode.js 4` must say `gang`, because that is how we actually played BN4.
+ *
+ * Missing fields fall back to 1.0 (the BN1-neutral value), so an older probe's record degrades toward
+ * "hacking" — the route that needs no 10-17h cold start and is therefore the safer thing to guess wrong.
+ */
+export function deriveRoute(mults: BitNodeMults): Route {
+  const hack = mults.ScriptHackMoney ?? 1;
+  const maxMoney = mults.ServerMaxMoney ?? 1;
+  const gangCap = mults.GangSoftcap ?? 1;
+  if (!Number.isFinite(hack) || !Number.isFinite(maxMoney) || !Number.isFinite(gangCap)) return 'hacking';
+  return hack * maxMoney < HACK_ROUTE_FLOOR && gangCap >= GANG_VIABLE_SOFTCAP ? 'gang' : 'hacking';
+}
+
+/**
  * The active strategy for `node`. PURE (0 GB) — no NS calls and no NS-named identifiers, which is what
  * lets all eight callers import it for nothing. Pass `ns.getResetInfo().currentNode`.
  *
@@ -452,21 +551,35 @@ const WORLD_DAEMON_BASE_REQ = 3000;
  * `readBitNodeMults` from `lib/bitnode` (`ns.getBitNodeMultipliers` is 4 GB and needs SF-5, so it is
  * paid once by `probe/bitnode.js` and shared through a file). Do NOT reach for them inside this
  * function; that would cost every importer 4 GB and break the purity the whole design rests on.
+ * Every field is optional — an older probe's record legitimately lacks fields added later — so each
+ * one is guarded at its point of use rather than validated as a block.
  *
- * Precedence is DEFAULT -> OVERRIDES -> live multipliers, and that last step deliberately outranks the
- * hand-written config: `hackReq` is a FACT about the node, not a preference, so measured beats
- * remembered. The hardcodes stay as the fail-safe for the window before the probe has run in a fresh
- * BitNode, and for a run without SF-5. Omitting `mults` reproduces the old behaviour exactly.
+ * Precedence is DEFAULT -> OVERRIDES -> live multipliers, and the last step outranks the hand-written
+ * config **for facts but not for preferences**:
+ *
+ * - `hackReq` is a FACT about the node, so measured always beats remembered.
+ * - `route` is a PREFERENCE, so an explicit `OVERRIDES[n].route` always beats the derivation. The
+ *   derivation only fills in nodes nobody has judged yet.
+ *
+ * The hardcodes stay as the fail-safe for the window before the probe has run in a fresh BitNode, and
+ * for a run without SF-5. Omitting `mults` reproduces the pre-derivation behaviour exactly.
  */
 export function strategyFor(node: number, mults?: BitNodeMults): Strategy {
   const o = OVERRIDES[node] ?? {};
   let disabledSubsystems = [...(BN_DISABLE[0] ?? []), ...(BN_DISABLE[node] ?? [])];
   let endgame = mergeSection(DEFAULT.endgame, o.endgame);
+  let route = mergeSection(DEFAULT.route, o.route);
 
   if (mults) {
+    // ROUTE: derived only when the node has not been judged by hand. `o.route?.primary` is the explicit
+    // verdict and always wins — the derivation exists for nodes we have never played, not to second-guess
+    // one we have.
+    if (o.route?.primary === undefined) route = { ...route, primary: deriveRoute(mults) };
+
     // Derived, not configured. BN1 1.0 -> 3000, BN5 1.5 -> 4500, BN4 3 -> 9000, BN2 5 -> 15000.
-    if (Number.isFinite(mults.WorldDaemonDifficulty) && mults.WorldDaemonDifficulty > 0) {
-      endgame = { ...endgame, hackReq: WORLD_DAEMON_BASE_REQ * mults.WorldDaemonDifficulty };
+    const wdd = mults.WorldDaemonDifficulty;
+    if (wdd !== undefined && Number.isFinite(wdd) && wdd > 0) {
+      endgame = { ...endgame, hackReq: WORLD_DAEMON_BASE_REQ * wdd };
     }
     // Purchased servers are not merely expensive here, they are IMPOSSIBLE (`ns.cloud.purchaseServer`
     // can never succeed), so auto-buy could only poll forever. BN9 is the node this exists for. Kept to
@@ -480,7 +593,10 @@ export function strategyFor(node: number, mults?: BitNodeMults): Strategy {
 
   return {
     disabledSubsystems,
-    crime: mergeSection(DEFAULT.crime, o.crime),
+    route,
+    // `needGang` is DERIVED from the route and overwritten unconditionally, so the two can never
+    // disagree. Setting `crime.needGang` in OVERRIDES has no effect — set `route.primary` instead.
+    crime: { ...mergeSection(DEFAULT.crime, o.crime), needGang: route.primary === 'gang' },
     augs: mergeSection(DEFAULT.augs, o.augs),
     rep: mergeSection(DEFAULT.rep, o.rep),
     programs: mergeSection(DEFAULT.programs, o.programs),

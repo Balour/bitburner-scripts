@@ -35,7 +35,7 @@ import { crimeStep } from './singularity/crime';
  *
  * Run it via `run /bootstrap.js` (which runs launch.js), or `run /singularity/launch.js` directly.
  */
-const REV = 'v5';
+const REV = 'v6';
 
 const LOOP_MS = 1000;
 /** Re-check program buys this often, until all six are owned (then stop). */
@@ -172,14 +172,20 @@ export async function main(ns: NS) {
     await waitPid(ns, ns.exec('/singularity/home.js', 'home'));
   }
 
-  // Reserve PHASE-AWARE RAM. P1 needs ~26 GB (crime calls); P2 only ~12 (cheap getters + exec — the heavy
-  // aug/rep work runs in one-shot helpers). Reserving lean in P2 leaves home free for those helpers, and is
-  // why the controller RELAUNCHES itself after founding (see the found branch) — a P1-sized reservation is
-  // monotonic and would otherwise starve them. On a shared home the daemon's transient rank/root execs
-  // briefly occupy RAM, so retry until we get enough (they finish in seconds) or give up if home is full.
+  // Reserve ROUTE-AWARE RAM. The karma grind needs ~26 GB (commitCrime / getCrimeChance / gymWorkout /
+  // travelToCity); everything else needs only ~12 (cheap getters + exec — the heavy aug/rep work runs in
+  // one-shot helpers). Reserving lean leaves home free for those helpers, and is why the controller
+  // RELAUNCHES itself after founding (see the found branch) — the reservation is monotonic and a P1-sized
+  // one would otherwise starve them for the rest of the run.
+  //
+  // KEYED ON THE ROUTE, not on `inGang`, and that distinction is the whole point. On the hacking route
+  // `crimeStep` is never called, so the 26 GB would be reserved and never used — and on a 32 GB home that
+  // leaves ~2 GB, which is less than `augs.js` (30 GB) or `repwork.js` (29 GB) need. The old gang-only test
+  // would have silently starved every P2 helper in BN1 while looking perfectly healthy.
   const inGangStart = ns.gang.inGang();
-  const NEEDED = inGangStart ? 12 : 26;
-  const target = inGangStart ? 16 : 30;
+  const grinding = strat.route.primary === 'gang' && !inGangStart;
+  const NEEDED = grinding ? 26 : 12;
+  const target = grinding ? 30 : 16;
   let alloc = reserve(ns, target);
   for (let i = 0; alloc < NEEDED && i < 30; i++) {
     await ns.sleep(2000);
@@ -272,7 +278,24 @@ export async function main(ns: NS) {
 
     const inGang = ns.gang.inGang();
 
-    // P1: karma grind -> found the gang.
+    // GANG-IF-FREE. On the hacking route nothing chases karma, but crime-money bridging accrues it as a
+    // side effect (and sleeves will, once SF-10 exists). If it happens to cross the gate, take the gang:
+    // it is income plus a faction that earns rep passively, for zero slot time we would not have spent
+    // anyway. `getPlayer` is already paid for below, and `found.js` no-ops without a gang-faction
+    // membership, so a failed attempt costs one exec.
+    if (!inGang && !strat.crime.needGang && strat.route.gangIfFree) {
+      if (ns.getPlayer().karma <= strat.crime.karmaTarget) {
+        await waitPid(ns, ns.exec('/gang/found.js', host));
+        if (ns.gang.inGang()) {
+          ns.exec('/bootstrap.js', 'home');
+          publish('gang-free', 'karma crossed the gate on the hacking route — gang founded for free');
+        }
+      }
+    }
+
+    // P1: karma grind -> found the gang. ONLY the action slot is owned here; the aug/install/home helpers
+    // below run on their own cadence during the grind, because they need no slot and waiting for the gang
+    // to spend $2.7b was the flaw this whole route split exists to fix.
     if (strat.crime.needGang && !inGang) {
       const p = ns.getPlayer();
 
@@ -301,6 +324,25 @@ export async function main(ns: NS) {
         publish('found-wait', 'createGang failed — no gang-faction membership yet; will retry');
         await sleepFor(30_000);
         continue;
+      }
+
+      // BUY AND INSTALL DURING THE GRIND. These need no action slot, so blocking them on the gang was
+      // pure dead time — measured in BN1 as $2.7b idle against 31 purchasable augs. Combat augs bought
+      // here directly speed the grind (homicide success is Σ(weight×stat), STR/DEF weighted 2), and
+      // installing resets combat levels but NOT the multipliers, so each cycle re-trains faster.
+      //
+      // RAM caveat, and it is real: the grind holds ~26 GB, so on a 32 GB home `augs.js` (30 GB) simply
+      // will not fit and `reserveOk` declines with "host too full". That is fail-safe, not a failure —
+      // home grows, and the pass lands on a later tick. It does mean the gang route only gets this
+      // benefit once home clears ~64 GB.
+      if (elapsedMs - lastAugs >= AUGS_EVERY_MS) {
+        await waitPid(ns, ns.exec('/singularity/augs.js', host));
+        await waitPid(ns, ns.exec('/singularity/install.js', host));
+        lastAugs = elapsedMs;
+      }
+      if (elapsedMs - lastHome >= HOME_EVERY_MS) {
+        await waitPid(ns, ns.exec('/singularity/home.js', host));
+        lastHome = elapsedMs;
       }
 
       const step = await crimeStep(ns, s, strat);
