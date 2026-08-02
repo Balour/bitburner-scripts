@@ -28,7 +28,7 @@ import { sing, reserve } from '../singularity/api';
  * Run: `run /probe/aug-priority.js`            top 40 + bloc rollup
  *      `run /probe/aug-priority.js --all`      every scored aug
  */
-const REV = 'v3';
+const REV = 'v4';
 
 /** Company-gated factions (grind their job to be invited). Same names as the companies. */
 const MEGACORPS = [
@@ -197,7 +197,8 @@ export async function main(ns: NS) {
     const total = scored.reduce((sum, r) => sum + r.score, 0);
     ns.tprint(`   ${bloc.name}  —  $${ns.format.number(bloc.cost)} to join all`);
     ns.tprint(
-      `      ${scored.length} scored aug(s), total score ${total.toFixed(2)}` +
+      `      ${mine.length} marginal aug(s) toward the Daedalus count` +
+        ` · ${scored.length} scored, total ${total.toFixed(2)}` +
         `${spec.length ? ` · ${spec.length} special-effect` : ''}` +
         `${best ? ` · best: ${best.name} (${best.score.toFixed(2)}, overall #${rankOf.get(best.name)})` : ''}`,
     );
@@ -211,6 +212,23 @@ export async function main(ns: NS) {
   }
   ns.tprint('   (total score compares blocs; median rank says whether to buy them BEFORE or AFTER the');
   ns.tprint('    hacking factions. Special-effect augs are unscored — read them in the section below.)');
+
+  // THE COUNT, reported separately from the SCORE because on the hacking route they are different
+  // questions and the count is usually the binding one. Daedalus needs DaedalusAugsRequirement augs
+  // INSTALLED before it will invite, and combat-only augs score 0 here while counting perfectly well
+  // toward that — so a bloc can be worthless for hacking value and still be the fastest way through the
+  // gate. Reachable = every unowned aug sold by a faction we are already IN, i.e. no new membership,
+  // no travel, no company grind.
+  const joined = new Set<string>(ns.getPlayer().factions);
+  const reachable = [...rows.values()].filter((r) => joined.has(r.faction)).length;
+  const installed = s['getOwnedAugmentations'](false).length;
+  ns.tprint('');
+  ns.tprint(
+    `  --- DAEDALUS COUNT: ${installed} installed, ${reachable} more reachable without joining anything new ---`,
+  );
+  ns.tprint("      Compare against the node's DaedalusAugsRequirement (run /probe/bitnode.js — 30 in BN1).");
+  ns.tprint('      If installed + reachable already clears it, the city blocs buy you NOTHING on count and');
+  ns.tprint('      the only reason to join one is the scored value above.');
 
   const specials = [...rows.values()].filter((r) => r.special).sort((a, b) => a.rep - b.rep);
   if (specials.length > 0) {
