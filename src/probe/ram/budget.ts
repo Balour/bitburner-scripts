@@ -49,6 +49,12 @@ const BUDGET = [
   ],
   ['/probe/state.js', '2.75', 'getResetInfo 1 + fileExists 0.1 + maxRam 0.05 + inGang 0 — read-only'],
   [
+    '/singularity/cities.js',
+    '10.20',
+    'travelToCity 2 + joinFaction 3 + checkFactionInvitations 3 + getPlayer 0.5 + money 0.1 + ' +
+      'getResetInfo 1 — Singularity base rates (x1 at SF-4.3)',
+  ],
+  [
     '/probe/bitnode.js',
     '6.60',
     'getBitNodeMultipliers 4 (needs SF-5) + getResetInfo 1 — the ONLY script that pays it; everyone ' +

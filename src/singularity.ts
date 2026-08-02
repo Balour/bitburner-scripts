@@ -35,7 +35,7 @@ import { crimeStep } from './singularity/crime';
  *
  * Run it via `run /bootstrap.js` (which runs launch.js), or `run /singularity/launch.js` directly.
  */
-const REV = 'v6';
+const REV = 'v7';
 
 const LOOP_MS = 1000;
 /** Re-check program buys this often, until all six are owned (then stop). */
@@ -63,7 +63,10 @@ const HOME_EVERY_MS = 600_000;
 /** Actions run focused (faster gym). But the moment YOU take focus, the controller releases the action
  * slot and backs off for this long before resuming — a real window to do whatever, uninterrupted. */
 const FOCUS_GRACE_MS = 60_000;
-/** Mutually-exclusive city factions — join at most one, so P2 skips auto-joining them to avoid a lockout. */
+/** City factions are skipped by the controller's own join loop — `cities.js` owns them, because joining
+ * one PERMANENTLY forecloses the other blocs and that decision belongs to `rep.cityBloc`, not to whichever
+ * invite happens to arrive first. Tian Di Hui is deliberately NOT here: it has no enemies, so accepting it
+ * anywhere is free. */
 const CITY_FACTIONS = new Set(['Sector-12', 'Aevum', 'Volhaven', 'Chongqing', 'Ishima', 'New Tokyo']);
 /** Below this cash in P2, run the action slot on crime-for-money instead of rep-work — bridges the early
  * gang ramp and post-aug-install drought. Above it, the gang provides and the slot does rep-work. */
@@ -504,6 +507,17 @@ export async function main(ns: NS) {
         await waitPid(ns, ns.exec('/singularity/install.js', host, 1, ...args));
       }
       lastAugs = elapsedMs;
+    }
+
+    // LOCATION factions — Tian Di Hui and (if configured) a city bloc. Cheap and slow-changing, so it
+    // rides the rep cadence rather than getting a timer of its own; cities.js no-ops once everything is
+    // held, and self-gates on affording the join, so a poor run just skips it.
+    //
+    // Worth the exec even on a mature run: these invites are the only ones that cannot be earned by
+    // grinding, only by BEING somewhere with money. TDH's S.N.A. is a rank-#9 rep-booster for 6.25k rep,
+    // which is close to the cheapest compounding aug in the game — it was sitting behind a plane ticket.
+    if (elapsedMs - lastRep >= REP_EVERY_MS) {
+      await waitPid(ns, ns.exec('/singularity/cities.js', host));
     }
 
     // Earn reputation toward target augs (hacking-track work also raises hacking level toward the endgame).

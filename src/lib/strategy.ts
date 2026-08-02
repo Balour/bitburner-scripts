@@ -63,6 +63,31 @@ export type BitNodeMults = Partial<
  */
 export type Route = 'hacking' | 'gang';
 
+/**
+ * The city-faction blocs, as ONE choice with four outcomes. Verified in `Faction/FactionInfo.tsx`:
+ * Sector-12 and Aevum each omit the other from `enemies`; Chongqing / New Tokyo / Ishima are mutually
+ * compatible; Volhaven is an enemy of all five. Joining any member forecloses the other blocs PERMANENTLY
+ * for the BitNode.
+ *
+ * Modelled as a keyed table rather than a free `string[]` on purpose: a list would let a caller configure
+ * `['Sector-12', 'Chongqing']` and lock itself out of both, and nothing would catch it until the invite
+ * silently never arrived. This shape cannot express that.
+ *
+ * Measured in BN1 with `/probe/aug-priority.js` (marginal augs — ones no cheaper faction already sells):
+ *   eastern   3 augs, best Neuregen Gene Modification (score 0.60, overall #17)
+ *   western   2 augs, best PCMatrix (0.51, #19), plus CashRoot Starter Kit
+ *   volhaven  1 aug,  DermaForce Particle Barrier (0.03, #50) — not worth a thought
+ * The scores are all marginal; what actually decides it is that eastern's cities are also where Tian Di
+ * Hui's invite lives, so one trip collects both.
+ */
+export const CITY_BLOCS: Record<CityBloc, string[]> = {
+  none: [],
+  eastern: ['Chongqing', 'New Tokyo', 'Ishima'],
+  western: ['Sector-12', 'Aevum'],
+  volhaven: ['Volhaven'],
+};
+export type CityBloc = 'none' | 'eastern' | 'western' | 'volhaven';
+
 export interface RouteStrategy {
   /** The action-slot economy. Derived from live multipliers when they are available (see
    * `strategyFor`), overridable per node. */
@@ -202,6 +227,12 @@ export interface RepStrategy {
   /** Companies to grind (job → its faction unlock) when faction rep-work is exhausted, in priority. Each
    * is both a company and a faction of the same name. Four Sigma first — its augs boost faction rep. */
   companyTargets: string[];
+  /** Which mutually-exclusive city bloc `cities.js` may join. See `CITY_BLOCS`; 'none' skips cities
+   * entirely, which is the conservative default because joining is irreversible for the BitNode.
+   *
+   * Tian Di Hui is NOT gated on this — it has no enemies, so `cities.js` always pursues it. This only
+   * decides whether we additionally take the cities themselves, and which set. */
+  cityBloc: CityBloc;
 }
 
 /**
@@ -352,6 +383,7 @@ const DEFAULT: Omit<Strategy, 'disabledSubsystems'> = {
     redPillFavorRoute: true,
     combatGate: { faction: '', combat: 0, hacking: 0, money: 0, augs: 0 },
     companyRepPhase: false,
+    cityBloc: 'none',
     companyTargets: [],
   },
   programs: {
@@ -413,6 +445,12 @@ const OVERRIDES: Record<number, StrategyOverride> = {
     rep: {
       companyRepPhase: true,
       companyTargets: ['Bachman & Associates', 'OmniTek Incorporated', 'Clarke Incorporated', 'Four Sigma'],
+      // EASTERN, and the deciding factor is not the score table. Measured 2026-08-02: 13 augs installed
+      // and only 8 more reachable without joining anything new, against a DaedalusAugsRequirement of 30 —
+      // so the count gate is genuinely binding and every extra faction counts. Eastern brings the most
+      // marginal augs (3, vs western 2 and volhaven 1) AND its cities are where Tian Di Hui's invite
+      // lives, so one trip collects both. Western would cost a second journey for strictly less.
+      cityBloc: 'eastern',
     },
     // Same re-bootstrap-tax logic as BN4/BN5. Tunable: with no AugmentationMoneyCost penalty here, smaller
     // batches bank multipliers sooner and might beat 8 — worth measuring across the two runs.
