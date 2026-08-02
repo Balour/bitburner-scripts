@@ -15,12 +15,20 @@ import { sing, reserve } from '../singularity/api';
  *   hacking_speed                            x1   — more ops per second = more exp
  *   hacking money cluster (money/grow/chance)x0.3 — BN4 guts hacking money, so minor
  *   charisma                                 x0.5 — speeds getting hired/promoted for company rep
- * Combat/crime/hacknet/bladeburner mults score 0 — irrelevant once the gang is the economy.
+ * Combat/crime/hacknet/bladeburner mults score 0 — this ranks a HACKING run. On a gang-route node the
+ * karma grind wants the opposite early on, and `augs.ts` handles that itself with a live combat filter;
+ * do not read this list as advice for that phase.
  *
- * Run: `run /probe/aug-priority.js`            top 40
+ * Two sections follow the ranking, and both exist because the flat list cannot express them:
+ *   CITY BLOCS      — the three mutually-exclusive city choices, scored by MARGINAL augs, with where they
+ *                     land in the overall queue. Answers "which bloc, and before or after the hacking
+ *                     factions" without joining anything.
+ *   SPECIAL-EFFECT  — augs with no multipliers at all, so unscoreable here and otherwise invisible.
+ *
+ * Run: `run /probe/aug-priority.js`            top 40 + bloc rollup
  *      `run /probe/aug-priority.js --all`      every scored aug
  */
-const REV = 'v2';
+const REV = 'v3';
 
 /** Company-gated factions (grind their job to be invited). Same names as the companies. */
 const MEGACORPS = [
@@ -66,6 +74,15 @@ const FACTIONS = [
  * rather than membership — so it is compatible with every bloc and already in FACTIONS above.
  */
 const CITY_FACTIONS = ['Sector-12', 'Aevum', 'Volhaven', 'Chongqing', 'New Tokyo', 'Ishima'];
+
+/** The three mutually-exclusive choices, with what each costs to join (money only — no rep grind for a
+ * city invite, which is what makes them the cheapest factions in the game). Joining ANY member of a bloc
+ * forecloses both other blocs, so this is one decision with three outcomes, not six independent ones. */
+const BLOCS: { name: string; factions: string[]; cost: number }[] = [
+  { name: 'EASTERN  Chongqing + New Tokyo + Ishima', factions: ['Chongqing', 'New Tokyo', 'Ishima'], cost: 70e6 },
+  { name: 'WESTERN  Sector-12 + Aevum', factions: ['Sector-12', 'Aevum'], cost: 55e6 },
+  { name: 'SOLO     Volhaven', factions: ['Volhaven'], cost: 50e6 },
+];
 
 function scoreOf(m: Record<string, number>): number {
   const up = (k: string) => (m[k] ?? 1) - 1;
@@ -158,6 +175,43 @@ export async function main(ns: NS) {
 
   // Listed separately BECAUSE they cannot be ranked: no multipliers means nothing to score, so the
   // ordering above is meaningless for them and putting them in it would imply a judgement we cannot make.
+  // BLOC ROLLUP. The bloc choice is one decision with three outcomes, so what matters is not "are city
+  // augs good" but "which bloc's augs outrank what I already have access to, and by how much".
+  //
+  // `rows` is deduped by aug keeping the LOWEST-REP source, which does exactly the right thing here: an
+  // aug a city sells that some hacking faction sells cheaper is attributed to the hacking faction, so it
+  // never counts toward a bloc it would not actually unlock. What each bloc scores below is therefore its
+  // MARGINAL value — augs you get by joining it and cannot get better elsewhere.
+  //
+  // Rank positions are against the full ranked list, which is the number that answers "buy these before
+  // or after the hacking factions?". A bloc whose best aug sits at #40 is a late-queue bloc however many
+  // augs it has.
+  const rankOf = new Map(ranked.map((r, i) => [r.name, i + 1]));
+  ns.tprint('');
+  ns.tprint('  --- CITY BLOCS: mutually exclusive, pick ONE. Marginal augs only (cheaper sources excluded) ---');
+  for (const bloc of BLOCS) {
+    const mine = [...rows.values()].filter((r) => bloc.factions.includes(r.faction));
+    const scored = mine.filter((r) => r.score > 0).sort((a, b) => b.score - a.score);
+    const spec = mine.filter((r) => r.special);
+    const best = scored[0];
+    const total = scored.reduce((sum, r) => sum + r.score, 0);
+    ns.tprint(`   ${bloc.name}  —  $${ns.format.number(bloc.cost)} to join all`);
+    ns.tprint(
+      `      ${scored.length} scored aug(s), total score ${total.toFixed(2)}` +
+        `${spec.length ? ` · ${spec.length} special-effect` : ''}` +
+        `${best ? ` · best: ${best.name} (${best.score.toFixed(2)}, overall #${rankOf.get(best.name)})` : ''}`,
+    );
+    // Where the bloc's augs actually land in the queue — the median rank is the honest summary, since one
+    // strong aug does not make a bloc worth joining if the rest sit at the bottom.
+    if (scored.length > 0) {
+      const positions = scored.map((r) => rankOf.get(r.name) ?? ranked.length).sort((a, b) => a - b);
+      const median = positions[Math.floor(positions.length / 2)];
+      ns.tprint(`      overall ranks ${positions[0]}..${positions[positions.length - 1]}, median #${median}`);
+    }
+  }
+  ns.tprint('   (total score compares blocs; median rank says whether to buy them BEFORE or AFTER the');
+  ns.tprint('    hacking factions. Special-effect augs are unscored — read them in the section below.)');
+
   const specials = [...rows.values()].filter((r) => r.special).sort((a, b) => a.rep - b.rep);
   if (specials.length > 0) {
     ns.tprint('');
