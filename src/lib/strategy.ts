@@ -66,12 +66,15 @@ export type Route = 'hacking' | 'gang';
 /**
  * The city-faction blocs, as ONE choice with four outcomes. Verified in `Faction/FactionInfo.tsx`:
  * Sector-12 and Aevum each omit the other from `enemies`; Chongqing / New Tokyo / Ishima are mutually
- * compatible; Volhaven is an enemy of all five. Joining any member forecloses the other blocs PERMANENTLY
- * for the BitNode.
+ * compatible; Volhaven is an enemy of all five. While you hold one, its enemies will not invite you.
+ *
+ * EXCLUSIVE PER INSTALL CYCLE, NOT PER BITNODE. `Player.prestigeAugmentation` does `this.factions = []`,
+ * so every install wipes membership and the bloc is chosen fresh next cycle. Favor survives, reputation
+ * does not. Switching is therefore cheap and repeatable — do not treat this as a one-way door.
  *
  * Modelled as a keyed table rather than a free `string[]` on purpose: a list would let a caller configure
- * `['Sector-12', 'Chongqing']` and lock itself out of both, and nothing would catch it until the invite
- * silently never arrived. This shape cannot express that.
+ * `['Sector-12', 'Chongqing']` and lock itself out of both WITHIN a cycle, and nothing would catch it
+ * until the invite silently never arrived. This shape cannot express that.
  *
  * Measured in BN1 with `/probe/aug-priority.js` (marginal augs — ones no cheaper faction already sells):
  *   eastern   3 augs, best Neuregen Gene Modification (score 0.60, overall #17)
@@ -87,6 +90,23 @@ export const CITY_BLOCS: Record<CityBloc, string[]> = {
   volhaven: ['Volhaven'],
 };
 export type CityBloc = 'none' | 'eastern' | 'western' | 'volhaven';
+
+/**
+ * The only cities with a GYM or a UNIVERSITY. Verified against `Locations/data/LocationsMetadata.ts`:
+ * Sector-12 (Iron + Powerhouse gyms, Rothman University), Aevum (Crush + Snap gyms, Summit University),
+ * Volhaven (Millenium Fitness, ZB Institute). **Chongqing, New Tokyo and Ishima have NEITHER.**
+ *
+ * Which means the EASTERN bloc — the one with the best augs — is a facility desert, and anything needing
+ * a gym or a class has to fly out. Travel is instant and $200k, so this is not a reason to avoid eastern;
+ * it is a reason no step may ASSUME its location.
+ *
+ * The pattern to copy is `crime.ts`: it calls `travelToCity(Sector12)` itself before every gym session
+ * rather than trusting where it happens to be. Any future charisma-via-university step (the megacorp path
+ * needs charisma, and augs are the slow way there) must do the same, or it will silently no-op whenever
+ * the run is parked in the east. `cities.js` also returns to a facility city rather than merely the one it
+ * departed from, so an unattended run never comes to rest somewhere it cannot train.
+ */
+export const FACILITY_CITIES = ['Sector-12', 'Aevum', 'Volhaven'];
 
 export interface RouteStrategy {
   /** The action-slot economy. Derived from live multipliers when they are available (see
@@ -228,7 +248,8 @@ export interface RepStrategy {
    * is both a company and a faction of the same name. Four Sigma first — its augs boost faction rep. */
   companyTargets: string[];
   /** Which mutually-exclusive city bloc `cities.js` may join. See `CITY_BLOCS`; 'none' skips cities
-   * entirely, which is the conservative default because joining is irreversible for the BitNode.
+   * entirely. Exclusive only within an install cycle — membership wipes at every install — so changing
+   * this between cycles costs nothing but a plane ticket.
    *
    * Tian Di Hui is NOT gated on this — it has no enemies, so `cities.js` always pursues it. This only
    * decides whether we additionally take the cities themselves, and which set. */

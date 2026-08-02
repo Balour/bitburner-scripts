@@ -28,7 +28,7 @@ import { sing, reserve } from '../singularity/api';
  * Run: `run /probe/aug-priority.js`            top 40 + bloc rollup
  *      `run /probe/aug-priority.js --all`      every scored aug
  */
-const REV = 'v4';
+const REV = 'v5';
 
 /** Company-gated factions (grind their job to be invited). Same names as the companies. */
 const MEGACORPS = [
@@ -75,13 +75,19 @@ const FACTIONS = [
  */
 const CITY_FACTIONS = ['Sector-12', 'Aevum', 'Volhaven', 'Chongqing', 'New Tokyo', 'Ishima'];
 
-/** The three mutually-exclusive choices, with what each costs to join (money only — no rep grind for a
- * city invite, which is what makes them the cheapest factions in the game). Joining ANY member of a bloc
- * forecloses both other blocs, so this is one decision with three outcomes, not six independent ones. */
-const BLOCS: { name: string; factions: string[]; cost: number }[] = [
-  { name: 'EASTERN  Chongqing + New Tokyo + Ishima', factions: ['Chongqing', 'New Tokyo', 'Ishima'], cost: 70e6 },
-  { name: 'WESTERN  Sector-12 + Aevum', factions: ['Sector-12', 'Aevum'], cost: 55e6 },
-  { name: 'SOLO     Volhaven', factions: ['Volhaven'], cost: 50e6 },
+/**
+ * The three mutually-exclusive choices, with the money THRESHOLD each needs. `haveMoney(n)` in
+ * `inviteReqs` checks your balance and spends nothing — same as Daedalus's $100b — so joining a city is
+ * FREE, and `need` below is the largest balance the bloc requires, not a price. With no rep grind either,
+ * these are the cheapest factions in the game by a wide margin.
+ *
+ * Exclusive within an install cycle only: `prestigeAugmentation` wipes membership, so a different bloc
+ * next cycle costs nothing. One decision with three outcomes, remade every reset.
+ */
+const BLOCS: { name: string; factions: string[]; need: number }[] = [
+  { name: 'EASTERN  Chongqing + New Tokyo + Ishima', factions: ['Chongqing', 'New Tokyo', 'Ishima'], need: 30e6 },
+  { name: 'WESTERN  Sector-12 + Aevum', factions: ['Sector-12', 'Aevum'], need: 40e6 },
+  { name: 'SOLO     Volhaven', factions: ['Volhaven'], need: 50e6 },
 ];
 
 function scoreOf(m: Record<string, number>): number {
@@ -195,7 +201,7 @@ export async function main(ns: NS) {
     const spec = mine.filter((r) => r.special);
     const best = scored[0];
     const total = scored.reduce((sum, r) => sum + r.score, 0);
-    ns.tprint(`   ${bloc.name}  —  $${ns.format.number(bloc.cost)} to join all`);
+    ns.tprint(`   ${bloc.name}  —  needs $${ns.format.number(bloc.need)} on hand (threshold, not a cost)`);
     ns.tprint(
       `      ${mine.length} marginal aug(s) toward the Daedalus count` +
         ` · ${scored.length} scored, total ${total.toFixed(2)}` +

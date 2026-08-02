@@ -64,9 +64,10 @@ const HOME_EVERY_MS = 600_000;
  * slot and backs off for this long before resuming — a real window to do whatever, uninterrupted. */
 const FOCUS_GRACE_MS = 60_000;
 /** City factions are skipped by the controller's own join loop — `cities.js` owns them, because joining
- * one PERMANENTLY forecloses the other blocs and that decision belongs to `rep.cityBloc`, not to whichever
- * invite happens to arrive first. Tian Di Hui is deliberately NOT here: it has no enemies, so accepting it
- * anywhere is free. */
+ * one blocks its enemies for the rest of the install cycle, and that decision belongs to `rep.cityBloc`
+ * rather than to whichever invite happens to arrive first. (Membership wipes at every install, so the
+ * choice is remade each cycle — cheap, but still a choice.) Tian Di Hui is deliberately NOT here: it has
+ * no enemies, so accepting it anywhere is free. */
 const CITY_FACTIONS = new Set(['Sector-12', 'Aevum', 'Volhaven', 'Chongqing', 'Ishima', 'New Tokyo']);
 /** Below this cash in P2, run the action slot on crime-for-money instead of rep-work — bridges the early
  * gang ramp and post-aug-install drought. Above it, the gang provides and the slot does rep-work. */

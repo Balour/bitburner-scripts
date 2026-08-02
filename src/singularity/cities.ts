@@ -1,6 +1,6 @@
 import type { NS } from '@ns';
 import { liveStrategy } from '../lib/bitnode';
-import { CITY_BLOCS } from '../lib/strategy';
+import { CITY_BLOCS, FACILITY_CITIES } from '../lib/strategy';
 import { sing, reserveOk } from './api';
 
 /**
@@ -24,13 +24,21 @@ import { sing, reserveOk } from './api';
  * requires being located in Chongqing, New Tokyo or Ishima, which are exactly the EASTERN bloc's cities.
  * One trip collects both. That, not the score table, is why eastern is the default bloc.
  *
- * ## The city blocs are mutually exclusive and joining is IRREVERSIBLE
+ * ## The blocs are exclusive WITHIN an install cycle, not for the BitNode
  *
  * Verified in `Faction/FactionInfo.tsx`: Sector-12 and Aevum each omit the other from `enemies`;
- * Chongqing / New Tokyo / Ishima are mutually compatible; Volhaven is an enemy of all five. Joining any
- * member of a bloc permanently forecloses the other two blocs for the rest of the BitNode. That is why
- * the choice is a single `rep.cityBloc` value rather than six independent flags — a shape that cannot
- * express a self-locking-out configuration.
+ * Chongqing / New Tokyo / Ishima are mutually compatible; Volhaven is an enemy of all five. While you hold
+ * one, its enemies will not invite you.
+ *
+ * But `Player.prestigeAugmentation` does `this.factions = []`, so every install wipes membership and the
+ * bloc is chosen FRESH each cycle — a different one next time costs nothing. Faction FAVOR survives (it
+ * lives on the Faction object), reputation does not. So this is a low-stakes, repeated decision, not a
+ * one-way door; `rep.cityBloc` is still a single value rather than six flags only because that shape
+ * cannot express a self-locking-out pair within one cycle.
+ *
+ * A consequence worth knowing: `cities.js` re-runs this every cycle, because membership is gone again
+ * after each install. That is cheap — the money in `inviteReqs` is a THRESHOLD, not a payment (same as
+ * Daedalus's $100b), so the only real cost is the $200k fare.
  *
  * Run: `run /singularity/cities.js`
  */
@@ -59,11 +67,13 @@ export async function main(ns: NS) {
   const joined = new Set<string>(ns.getPlayer().factions);
   const startCity = ns.getPlayer().city as string;
 
-  /** Fly somewhere, but only when the trip can actually pay off. Travelling without the join money is
-   * pure waste — the invite simply will not appear, and we would fly back next pass and try again. */
-  const goIfWorthIt = (city: string, joinCost: number): boolean => {
+  /** Fly somewhere, but only when the trip can actually end in a join. `needMoney` is the invite's money
+   * THRESHOLD, not a price — `haveMoney(n)` in `inviteReqs` checks the balance and spends nothing. But we
+   * must still clear it AFTER paying the fare, or we land solvent-on-paper and no invite appears, then fly
+   * back and repeat forever. That loop is the only thing this gate exists to prevent. */
+  const goIfWorthIt = (city: string, needMoney: number): boolean => {
     if (ns.getPlayer().city === city) return true;
-    if (money() < joinCost + TRAVEL_COST) return false;
+    if (money() - TRAVEL_COST < needMoney) return false;
     return s['travelToCity'](city);
   };
 
@@ -103,10 +113,23 @@ export async function main(ns: NS) {
     acceptInvites((f) => bloc.includes(f));
   }
 
-  // 3. Go home. Being parked in a foreign city silently changes what OTHER things do — gym choice in
-  //    crime.ts, company availability for repwork.ts — so leaving the player somewhere unexpected is a
-  //    side effect this script has no business having.
-  if (ns.getPlayer().city !== startCity && money() > TRAVEL_COST) s['travelToCity'](startCity);
+  // 3. COME BACK TO A CITY WITH FACILITIES — not merely the one we left.
+  //
+  //    Chongqing, New Tokyo and Ishima have no gym and no university (verified against
+  //    LocationsMetadata.ts; all six facilities are in Sector-12, Aevum and Volhaven). So the eastern
+  //    bloc, the one worth joining, is exactly the region where training is impossible — and parking the
+  //    run there is a side effect that outlives this script.
+  //
+  //    `crime.ts` survives it because it flies to Sector-12 itself before every gym session, but relying
+  //    on every future caller to remember that is how a charisma-via-university step ends up silently
+  //    no-opping for a whole run. Returning to a facility city means the resting state is always safe,
+  //    and returning to `startCity` alone would not guarantee that — the run may have BEGUN in the east.
+  const endCity = FACILITY_CITIES.includes(startCity) ? startCity : FACILITY_CITIES[0];
+  if (ns.getPlayer().city !== endCity && money() > TRAVEL_COST) {
+    if (s['travelToCity'](endCity) && endCity !== startCity) {
+      ns.tprint(`=== cities ${REV} — ${startCity} has no gym/university; resting in ${endCity} instead ===`);
+    }
+  }
 
   const missing = [...bloc, TIAN_DI_HUI].filter((f) => !joined.has(f));
   if (missing.length === 0) ns.print(`cities ${REV}: all location factions held — nothing to do.`);
