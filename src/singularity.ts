@@ -35,7 +35,7 @@ import { crimeStep } from './singularity/crime';
  *
  * Run it via `run /bootstrap.js` (which runs launch.js), or `run /singularity/launch.js` directly.
  */
-const REV = 'v4';
+const REV = 'v5';
 
 const LOOP_MS = 1000;
 /** Re-check program buys this often, until all six are owned (then stop). */

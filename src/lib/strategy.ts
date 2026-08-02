@@ -12,10 +12,22 @@
  * Every future run passes through this. When a node needs a different plan, add an entry to
  * OVERRIDES — do not fork the controllers.
  */
+import type { BitNodeMultipliers } from '@ns';
 import { BN_DISABLE } from './ports';
-// TYPE-ONLY, and it must stay that way: the transform erases it, so `lib/bitnode`'s `ns.read` never
-// enters this module's dependency set and importing strategy.ts stays 0 GB.
-import type { BitNodeMults } from './bitnode';
+
+/**
+ * The BitNode multipliers this module consumes, injected by the caller (see `liveStrategy` in
+ * `lib/bitnode.ts`). Deliberately narrow: every field has a decision attached, so adding one should mean
+ * adding the logic that reads it. `Pick` keeps us honest against the real `BitNodeMultipliers` — a field
+ * renamed in a game update becomes a compile error rather than a silent 1.0.
+ *
+ * It is declared HERE, in the consumer, and not in `lib/bitnode.ts`, on purpose. bitnode imports
+ * `strategyFor` as a VALUE; if strategy imported this type back from bitnode the two modules would form
+ * an import cycle that survives only as long as the transform erases the type import exactly as expected.
+ * Declaring it here makes the dependency strictly one-way — `bitnode -> strategy -> ports` — so there is
+ * no cycle to reason about. `@ns` is types only, so this import is free and erases completely.
+ */
+export type BitNodeMults = Pick<BitNodeMultipliers, 'WorldDaemonDifficulty' | 'CloudServerLimit'>;
 
 /** Which augment family the buyer weights first. Phase-dependent in practice: a gang node
  * grinds combat early (faster homicide) then pivots to hacking (level -> daemon requirement). */
