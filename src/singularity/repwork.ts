@@ -22,17 +22,20 @@ import { augValue, valuePerRep, type MultBag } from '../lib/aug-value';
  * - **Skip donatable factions.** Above `ns.getFavorToDonate()` favor, a faction's rep is purchasable, and
  *   `augs.ts` buys it in the same cycle it spends it. Grinding such a faction by hand is the exact waste
  *   this rule exists to kill — the slot belongs on a faction money cannot help.
- * - **Push factions over the favor gate first** (`strat.rep.favorPush`) — but ONLY where the gate is the
- *   cheaper route. Favor is awarded only at an install, which converts rep to favor and zeroes the rep.
- *   Crossing turns that faction's rep from a time cost into a money cost PERMANENTLY (for the rest of the
- *   BitNode — favor resets on entering a new one), so the last stretch before the gate outranks a faction
- *   that merely has more augs on offer. The qualifier matters: if the priciest gated aug is closer than
- *   the gate, grinding the augs directly is both cheaper AND finishes the faction, and pushing for favor
- *   is pure waste. Compare the two gaps; never assume the gate wins.
+ * - **The favor gate is priced, not privileged** (`strat.rep.favorPush`). Favor is awarded only at an
+ *   install, which converts rep to favor and zeroes the rep; crossing turns that faction's remaining rep
+ *   from a time cost into a money cost for the rest of the BitNode. That is worth something, so it
+ *   competes — as `gatedValue / gateGap`, against the best single aug's `augValue / repGap`, in the same
+ *   units. Whichever is the better buy wins.
+ *
+ *   It used to be a PRIORITY TIER that outranked value outright, and BN1 showed why that fails: with no
+ *   faction yet at 150 favor, every candidate was in push mode, the tiebreak degenerated to "nearest to
+ *   crossing", and the slot went to OmniTek (4 augs, best `hacking x1.20`) while BitRunners sat with 10
+ *   augs including `hacking x1.30` about as far away. Value was never consulted at all.
  *
  * Run: `run /singularity/repwork.js`
  */
-const REV = 'v10';
+const REV = 'v11';
 /** Default order: hacking work pays the most rep for a hacking-built character, and its XP feeds the
  * endgame climb. Swapped for the combat order below while a combat gate is open. */
 const WORK_TYPES = ['hacking', 'security', 'field'];
@@ -168,6 +171,9 @@ export async function main(ns: NS) {
        * BitRunners (fewer augs, `hacking x1.30`, 250k rep away) and would have ground hours for the
        * weaker outcome. See `lib/aug-value.ts` for why `hacking` dominates the weights. */
       let bestPerRep = 0;
+      /** Total value of everything still gated here — what CROSSING THE FAVOR GATE unlocks, since past it
+       * all of this faction's remaining rep becomes a cash purchase rather than slot time. */
+      let gatedValue = 0;
       for (const aug of s['getAugmentationsFromFaction'](f)) {
         if (owned.has(aug)) continue;
         const gap = s['getAugmentationRepReq'](aug) - rep;
@@ -176,44 +182,69 @@ export async function main(ns: NS) {
           if (gap > augGap) augGap = gap;
         }
         if (statsOk) {
-          const v = valuePerRep(augValue(s['getAugmentationStats'](aug) as unknown as MultBag), gap);
-          if (v > bestPerRep) bestPerRep = v;
+          const v = augValue(s['getAugmentationStats'](aug) as unknown as MultBag);
+          if (gap > 0) gatedValue += v;
+          const perRep = valuePerRep(v, gap);
+          if (perRep > bestPerRep) bestPerRep = perRep;
         }
       }
       // Rep still needed ON TOP of what we hold for the next install to carry this faction over the
       // donation gate. 0 means the favor is already banked — installing now unlocks donations here, so
       // there is nothing further to gain by grinding it for FAVOR (its augs may still be worth rep).
       const gateGap = Math.max(0, repToReachFavor(s['getFactionFavor'](f), minFavor) - rep);
-      // ...and only PUSH for it where the gate is genuinely the cheaper route. Crossing costs `gateGap`
-      // rep and then money; finishing by hand costs `augGap` rep and nothing else. When augGap is the
-      // smaller number the push is strictly wasted work — it buys donation access to a faction we are
-      // about to have no further use for, since buying the augs empties it and `want` drops to 0.
+
+      // THE FAVOR GATE IS JUST ANOTHER PURCHASE, priced like any other. It costs `gateGap` reputation and
+      // it buys `gatedValue` — everything still locked here, because past the gate that rep is money
+      // rather than slot time (and money is the resource we are least short of).
       //
-      // Observed in BN5: CyberSec, priciest gated aug 18.75k rep, being ground 332.768k rep toward the
-      // gate — 17x the work for zero gain. Daedalus is the shape this feature IS for (2.5M rep for The
-      // Red Pill against ~462.5k to cross) and still qualifies, as does any megacorp with a deep catalogue.
-      const favorShort = strat.rep.favorPush && augGap > gateGap ? gateGap : 0;
-      return { faction: f, want, favorShort, bestPerRep };
+      // It used to be a separate PRIORITY TIER that outranked value outright, and that was wrong twice
+      // over. Observed live in BN1: with no faction yet at 150 favor, EVERY candidate was in push mode,
+      // so the tiebreak became "nearest to crossing" and the slot went to OmniTek — 4 augs left, best
+      // `hacking x1.20` — while BitRunners sat with 10 augs including `hacking x1.30` only ~233k away.
+      // Value was never consulted.
+      //
+      // The old guard (`augGap > gateGap`) was the second error: `augGap` is the PRICIEST gated aug, on
+      // the reasoning that clearing the dearest clears the rest. That only holds if you want them all.
+      // You want the valuable ones, which are routinely far cheaper — so it waved through pushes that a
+      // direct grind beats comfortably.
+      const gatePerRep = strat.rep.favorPush && gateGap > 0 ? valuePerRep(gatedValue, gateGap) : 0;
+      // Push only when the gate genuinely outbids buying the best aug directly. Same units, same scale,
+      // so it is a comparison rather than a policy.
+      const favorShort = statsOk
+        ? gatePerRep > bestPerRep
+          ? gateGap
+          : 0
+        : strat.rep.favorPush && augGap > gateGap
+          ? gateGap
+          : 0;
+      return { faction: f, want, favorShort, bestPerRep, gatePerRep };
     })
     .filter((c) => c.want > 0)
     .sort((a, b) => {
-      // Factions still short of the gate come first, nearest-to-crossing leading: that rep buys permanent
-      // donation access, which is worth more than any single aug behind it.
+      // ONE ordering, by value per rep — whichever of "grind to the best aug" or "grind to the gate" is
+      // the better buy at each faction. No tier jumps the queue any more.
+      if (statsOk) {
+        const aScore = Math.max(a.bestPerRep, a.gatePerRep);
+        const bScore = Math.max(b.bestPerRep, b.gatePerRep);
+        if (aScore !== bScore) return bScore - aScore;
+      }
+      // Pre-value fallback, used only when the 5 GB stats read could not be afforded: nearest-to-gate
+      // first, then aug count. Worse, but it is the behaviour that shipped for weeks and it still moves.
       const aPush = a.favorShort > 0 ? 0 : 1;
       const bPush = b.favorShort > 0 ? 0 : 1;
       if (aPush !== bPush) return aPush - bPush;
       if (aPush === 0 && a.favorShort !== b.favorShort) return a.favorShort - b.favorShort;
-      // Then by VALUE PER REP, not by aug count. Falls back to count only when the stats read could not
-      // be afforded (`statsOk` false), so a full home never changes behaviour but a starved one still
-      // makes the old decision instead of no decision.
-      if (statsOk && a.bestPerRep !== b.bestPerRep) return b.bestPerRep - a.bestPerRep;
       return b.want - a.want;
     });
 
   for (const c of ranked) {
-    const rank = statsOk ? `value/rep ${c.bestPerRep.toExponential(2)}` : `${c.want} aug(s) gated`;
-    const why =
-      c.favorShort > 0 ? `${ns.format.number(c.favorShort)} rep from the ${minFavor}-favor gate · ${rank}` : rank;
+    // Say WHICH buy won and at what price. A wrong pick should be diagnosable from one terminal line
+    // rather than by re-deriving the ranking by hand — which is what the OmniTek episode actually cost.
+    const why = !statsOk
+      ? `${c.want} aug(s) gated — count fallback, no stats budget`
+      : c.gatePerRep > c.bestPerRep
+        ? `favor gate ${ns.format.number(c.favorShort)} rep away, unlocks ${c.want} aug(s) at ${c.gatePerRep.toExponential(2)}/rep`
+        : `best aug at ${c.bestPerRep.toExponential(2)}/rep (gate would be ${c.gatePerRep.toExponential(2)})`;
     if (workFaction(c.faction, why)) return;
   }
 
