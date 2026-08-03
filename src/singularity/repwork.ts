@@ -35,7 +35,7 @@ import { augValue, valuePerRep, type MultBag } from '../lib/aug-value';
  *
  * Run: `run /singularity/repwork.js`
  */
-const REV = 'v11';
+const REV = 'v12';
 /** Default order: hacking work pays the most rep for a hacking-built character, and its XP feeds the
  * endgame climb. Swapped for the combat order below while a combat gate is open. */
 const WORK_TYPES = ['hacking', 'security', 'field'];
@@ -174,19 +174,38 @@ export async function main(ns: NS) {
       /** Total value of everything still gated here — what CROSSING THE FAVOR GATE unlocks, since past it
        * all of this faction's remaining rep becomes a cash purchase rather than slot time. */
       let gatedValue = 0;
+      /** Every gated aug as (rep still needed, value), for the frontier below. Augs already affordable are
+       * EXCLUDED: they need money, not slot time, and `augs.ts` is already buying them. Including them was
+       * a real bug — `valuePerRep` returns Infinity at gap <= 0, so one affordable unbought aug made its
+       * faction win the ranking outright, for reputation it did not need. */
+      const gated: { gap: number; value: number }[] = [];
       for (const aug of s['getAugmentationsFromFaction'](f)) {
         if (owned.has(aug)) continue;
         const gap = s['getAugmentationRepReq'](aug) - rep;
-        if (gap > 0) {
-          want++;
-          if (gap > augGap) augGap = gap;
-        }
-        if (statsOk) {
-          const v = augValue(s['getAugmentationStats'](aug) as unknown as MultBag);
-          if (gap > 0) gatedValue += v;
-          const perRep = valuePerRep(v, gap);
-          if (perRep > bestPerRep) bestPerRep = perRep;
-        }
+        if (gap <= 0) continue;
+        want++;
+        if (gap > augGap) augGap = gap;
+        const v = statsOk ? augValue(s['getAugmentationStats'](aug) as unknown as MultBag) : 0;
+        gatedValue += v;
+        gated.push({ gap, value: v });
+      }
+
+      // THE FRONTIER, and this is the part scoring a single best aug could not express: REPUTATION DOES
+      // NOT TRANSFER BETWEEN FACTIONS. Grinding NiteSec to reach one aug and then still needing BitRunners
+      // from 16.9k pays for both climbs, where BitRunners alone would have passed that aug's requirement
+      // AND nine others on a single climb. Depth is worth real slot time, and per-aug ratios are blind to
+      // it — which is how a two-aug faction outbid a ten-aug one on 2.44e-4.
+      //
+      // So: sort by rep needed, walk outward, and score each stopping point by the TOTAL value unlocked by
+      // reaching it. The best of those is what this faction is worth. A deep faction beats a shallow one
+      // whose single cheapest aug happens to be nearer, which is the correct answer when the shallow one
+      // leaves you with the deep grind still ahead.
+      gated.sort((a, b) => a.gap - b.gap);
+      let cumulative = 0;
+      for (const g of gated) {
+        cumulative += g.value;
+        const perRep = valuePerRep(cumulative, g.gap);
+        if (perRep > bestPerRep) bestPerRep = perRep;
       }
       // Rep still needed ON TOP of what we hold for the next install to carry this faction over the
       // donation gate. 0 means the favor is already banked — installing now unlocks donations here, so
@@ -244,7 +263,7 @@ export async function main(ns: NS) {
       ? `${c.want} aug(s) gated — count fallback, no stats budget`
       : c.gatePerRep > c.bestPerRep
         ? `favor gate ${ns.format.number(c.favorShort)} rep away, unlocks ${c.want} aug(s) at ${c.gatePerRep.toExponential(2)}/rep`
-        : `best aug at ${c.bestPerRep.toExponential(2)}/rep (gate would be ${c.gatePerRep.toExponential(2)})`;
+        : `${c.want} gated aug(s), best frontier ${c.bestPerRep.toExponential(2)}/rep (gate would be ${c.gatePerRep.toExponential(2)})`;
     if (workFaction(c.faction, why)) return;
   }
 
