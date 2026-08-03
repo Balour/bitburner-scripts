@@ -1,7 +1,8 @@
 import type { NS } from '@ns';
 import { liveStrategy } from '../lib/bitnode';
 import { repToReachFavor } from '../lib/favor';
-import { sing, reserveOk } from './api';
+import { sing, reserve, reserveOk } from './api';
+import { augValue, valuePerRep, type MultBag } from '../lib/aug-value';
 
 /**
  * P2 action-slot work (Singularity), one-shot. Priority:
@@ -31,7 +32,7 @@ import { sing, reserveOk } from './api';
  *
  * Run: `run /singularity/repwork.js`
  */
-const REV = 'v9';
+const REV = 'v10';
 /** Default order: hacking work pays the most rep for a hacking-built character, and its XP feeds the
  * endgame climb. Swapped for the combat order below while a combat gate is open. */
 const WORK_TYPES = ['hacking', 'security', 'field'];
@@ -43,6 +44,11 @@ const DAEDALUS = 'Daedalus';
 export async function main(ns: NS) {
   // ~28.9 GB: v5's 27.6 + getFactionFavor 1 + getFavorToDonate 0.1 + the gate's money 0.1 / hackingLevel 0.05.
   if (!reserveOk(ns, 40, 29)) return;
+  // +5 GB for getAugmentationStats, which is what lets the ranking below use VALUE instead of aug count.
+  // Raised separately and allowed to fail: `reserve()` is raise-only, so a refusal leaves the 29 GB intact
+  // and we fall back to the old count-based ordering. Ranking slightly wrong beats not running at all on a
+  // full home — this is the same fail-open shape as the donation raise in augs.ts.
+  const statsOk = reserve(ns, 40) >= 34;
   const s = sing(ns);
   const strat = liveStrategy(ns, ns.getResetInfo().currentNode);
   const owned = new Set(s['getOwnedAugmentations'](true));
@@ -154,12 +160,24 @@ export async function main(ns: NS) {
       /** The priciest gated aug's shortfall — i.e. the rep that FINISHES this faction by hand, since
        * clearing the most expensive one clears every cheaper one along the way. */
       let augGap = 0;
+      /** BEST VALUE-PER-REP available here — the number that decides where the slot goes.
+       *
+       * The slot buys reputation and nothing else, so the question is never "which faction has the most
+       * augs" but "which rep is worth the most per point". Ranking by COUNT got that backwards and it
+       * showed: in BN1 it picked OmniTek (many gated augs, 625k rep away, best `hacking x1.20`) over
+       * BitRunners (fewer augs, `hacking x1.30`, 250k rep away) and would have ground hours for the
+       * weaker outcome. See `lib/aug-value.ts` for why `hacking` dominates the weights. */
+      let bestPerRep = 0;
       for (const aug of s['getAugmentationsFromFaction'](f)) {
         if (owned.has(aug)) continue;
         const gap = s['getAugmentationRepReq'](aug) - rep;
         if (gap > 0) {
           want++;
           if (gap > augGap) augGap = gap;
+        }
+        if (statsOk) {
+          const v = valuePerRep(augValue(s['getAugmentationStats'](aug) as unknown as MultBag), gap);
+          if (v > bestPerRep) bestPerRep = v;
         }
       }
       // Rep still needed ON TOP of what we hold for the next install to carry this faction over the
@@ -175,24 +193,27 @@ export async function main(ns: NS) {
       // gate — 17x the work for zero gain. Daedalus is the shape this feature IS for (2.5M rep for The
       // Red Pill against ~462.5k to cross) and still qualifies, as does any megacorp with a deep catalogue.
       const favorShort = strat.rep.favorPush && augGap > gateGap ? gateGap : 0;
-      return { faction: f, want, favorShort };
+      return { faction: f, want, favorShort, bestPerRep };
     })
     .filter((c) => c.want > 0)
     .sort((a, b) => {
       // Factions still short of the gate come first, nearest-to-crossing leading: that rep buys permanent
-      // donation access, which is worth more than any single aug behind it. Then by aug count.
+      // donation access, which is worth more than any single aug behind it.
       const aPush = a.favorShort > 0 ? 0 : 1;
       const bPush = b.favorShort > 0 ? 0 : 1;
       if (aPush !== bPush) return aPush - bPush;
       if (aPush === 0 && a.favorShort !== b.favorShort) return a.favorShort - b.favorShort;
+      // Then by VALUE PER REP, not by aug count. Falls back to count only when the stats read could not
+      // be afforded (`statsOk` false), so a full home never changes behaviour but a starved one still
+      // makes the old decision instead of no decision.
+      if (statsOk && a.bestPerRep !== b.bestPerRep) return b.bestPerRep - a.bestPerRep;
       return b.want - a.want;
     });
 
   for (const c of ranked) {
+    const rank = statsOk ? `value/rep ${c.bestPerRep.toExponential(2)}` : `${c.want} aug(s) gated`;
     const why =
-      c.favorShort > 0
-        ? `${ns.format.number(c.favorShort)} rep from the ${minFavor}-favor donation gate · ${c.want} aug(s) gated`
-        : `${c.want} aug(s) gated`;
+      c.favorShort > 0 ? `${ns.format.number(c.favorShort)} rep from the ${minFavor}-favor gate · ${rank}` : rank;
     if (workFaction(c.faction, why)) return;
   }
 
