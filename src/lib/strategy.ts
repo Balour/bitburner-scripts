@@ -242,7 +242,17 @@ export interface RepStrategy {
   combatGate: CombatGate;
   /** Allow the LATE company-rep path: `applyToCompany` -> `workForCompany` to a megacorp faction's
    * invite threshold -> join -> work its rep. Needs high stats to get hired, so it is gated off early
-   * and turned on once the economy is mature. */
+   * and turned on once the economy is mature.
+   *
+   * WEIGH IT AGAINST `endgame.hackReq`, not against the augs in isolation. This is two grinds stacked —
+   * company rep to earn the invite, then faction rep to buy anything — and its payoff is the compounding
+   * rep-boosters, which only earn out if many install cycles remain. At a low daemon requirement the
+   * hacking factions (BitRunners in particular) sell comparable `hacking` multipliers for FACTION rep
+   * alone, reachable by a backdoor rather than a job. Measured in BN1 (hackReq 3000): OmniTek wanted ~3.6
+   * more hours for `hack x1.20` while BitRunners sells `hack x1.30` at 250k rep with no company step.
+   *
+   * The thing to compare is always the hacking MULTIPLIER bought per hour. XP is almost never the binding
+   * constraint late in a node — see the BN1 note in `OVERRIDES[1]` for the arithmetic. */
   companyRepPhase: boolean;
   /** Companies to grind (job → its faction unlock) when faction rep-work is exhausted, in priority. Each
    * is both a company and a faction of the same name. Four Sigma first — its augs boost faction rep. */
@@ -464,7 +474,22 @@ const OVERRIDES: Record<number, StrategyOverride> = {
     // daemon req of only 3000, so the aug COUNT arrives last. The megacorp path is what widens the aug
     // supply enough to reach 30, which is why it is on despite the short climb.
     rep: {
-      companyRepPhase: true,
+      // MEGACORPS OFF, reversing the earlier setting. The company path is two grinds stacked — company rep
+      // for the invite, then faction rep for the augs — and it only repays that at a HIGH daemon
+      // requirement, where the compounding rep-boosters have many cycles left to compound over. BN1 asks
+      // for 3000.
+      //
+      // Measured live 2026-08-03: hacking 1,259 at multiplier 324.10% with 97.36m XP. Solving
+      // `lib/skills.ts` both ways is decisive — reaching 3000 at the CURRENT multiplier needs ~1.9e15 XP
+      // (twenty million times what we hold, i.e. never), while reaching it at the CURRENT XP needs a
+      // multiplier of only ~7.7. XP is not the constraint here and cannot become one; the multiplier is
+      // the whole game. So a rep grind is worth exactly the hacking multiplier it buys per hour.
+      //
+      // By that measure the company path loses badly: OmniTek sat at 155.8k of 625k rep at 35.9/sec —
+      // ~3.6 more hours for one `hack x1.20`. BitRunners sells `hack x1.30` (Cranial Signal Processors
+      // Gen V) at 250k FACTION rep, reached by backdooring run4theh111z with no company grind at all.
+      // Turn this back on for a node whose hackReq is high enough that the rep-boosters earn out.
+      companyRepPhase: false,
       companyTargets: ['Bachman & Associates', 'OmniTek Incorporated', 'Clarke Incorporated', 'Four Sigma'],
       // EASTERN, and the deciding factor is not the score table. Measured 2026-08-02: 13 augs installed
       // and only 8 more reachable without joining anything new, against a DaedalusAugsRequirement of 30 —
