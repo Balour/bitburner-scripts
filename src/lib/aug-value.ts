@@ -41,19 +41,34 @@ export type MultBag = Record<string, number>;
  * rather than in multipliers (CashRoot Starter Kit, Neuroreceptor Management Implant). Callers that care
  * about those must handle them separately; a score of 0 is not a verdict of worthless.
  */
-export function augValue(m: MultBag): number {
+/** What the run is actually pursuing. Scoring an aug without this is scoring it for a different game. */
+export interface ValueContext {
+  /** Is the megacorp path active (`strat.rep.companyRepPhase`)? When it is NOT, `company_rep` and
+   * `charisma` are worth essentially nothing — there is no company being worked and no job to be hired
+   * for — yet they are otherwise weighted like the best multipliers in the game.
+   *
+   * Observed in BN1 with the company path off: The Shadow's Simulacrum, a company-rep booster at 37.5k
+   * rep, scored like a top pickup and pulled the action slot onto The Syndicate. The aug was priced for
+   * a strategy that had been switched off hours earlier. */
+  companyPath: boolean;
+}
+
+export function augValue(m: MultBag, ctx: ValueContext): number {
   const up = (k: string) => (m[k] ?? 1) - 1;
+  // Rep boosters compound — they do not buy one aug, they cheapen every aug bought afterwards, including
+  // the NeuroFlux ladder whose rep requirement climbs 1.14x per level. But only for reputation we are
+  // ACTUALLY going to earn: with the company path off, company_rep compounds into nothing.
+  const repValue = (up('faction_rep') + (ctx.companyPath ? up('company_rep') : 0)) * 3;
   return (
-    // Compounds into every later purchase — the only multiplier that buys more multipliers.
-    (up('faction_rep') + up('company_rep')) * 3 +
+    repValue +
     // The binding constraint on the daemon climb, per the note above.
     up('hacking') * 2 +
     up('hacking_exp') * 1.5 +
     up('hacking_speed') * 1 +
     // Income, which is rarely what limits a mature run.
     (up('hacking_money') + up('hacking_grow') + up('hacking_chance')) * 0.3 +
-    // Only useful as a gate-opener for company work; worthless once that path is off.
-    up('charisma') * 0.5
+    // Purely a gate-opener for getting hired. Worth nothing at all once that path is off.
+    (ctx.companyPath ? up('charisma') * 0.5 : 0)
   );
 }
 

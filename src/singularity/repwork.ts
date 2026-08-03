@@ -35,7 +35,7 @@ import { augValue, valuePerRep, type MultBag } from '../lib/aug-value';
  *
  * Run: `run /singularity/repwork.js`
  */
-const REV = 'v12';
+const REV = 'v13';
 /** Default order: hacking work pays the most rep for a hacking-built character, and its XP feeds the
  * endgame climb. Swapped for the combat order below while a combat gate is open. */
 const WORK_TYPES = ['hacking', 'security', 'field'];
@@ -54,6 +54,9 @@ export async function main(ns: NS) {
   const statsOk = reserve(ns, 40) >= 34;
   const s = sing(ns);
   const strat = liveStrategy(ns, ns.getResetInfo().currentNode);
+  // Score augs for the strategy we are ACTUALLY running. With the company path off, company_rep and
+  // charisma buy nothing, and paying a premium for them sends the slot to the wrong faction entirely.
+  const valueCtx = { companyPath: strat.rep.companyRepPhase };
   const owned = new Set(s['getOwnedAugmentations'](true));
   const inFactions = new Set<string>(ns.getPlayer().factions);
   const gangFaction = ns.gang.inGang() ? ns.gang.getGangInformation().faction : '';
@@ -185,7 +188,7 @@ export async function main(ns: NS) {
         if (gap <= 0) continue;
         want++;
         if (gap > augGap) augGap = gap;
-        const v = statsOk ? augValue(s['getAugmentationStats'](aug) as unknown as MultBag) : 0;
+        const v = statsOk ? augValue(s['getAugmentationStats'](aug) as unknown as MultBag, valueCtx) : 0;
         gatedValue += v;
         gated.push({ gap, value: v });
       }
